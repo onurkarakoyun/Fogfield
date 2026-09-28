@@ -23,6 +23,7 @@ namespace AncientTree.Board
 
             // Only interact if in Gameplay state
             if (GameManager.Instance != null && GameManager.Instance.CurrentState != GameState.Gameplay) return;
+            if (AncientTree.UI.PauseManager.Instance != null && AncientTree.UI.PauseManager.Instance.IsPaused) return;
             if (TurnManager.Instance == null || TurnManager.Instance.IsActionLocked) return;
 
             bool isPressed = false;

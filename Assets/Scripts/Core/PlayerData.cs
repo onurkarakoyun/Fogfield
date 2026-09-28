@@ -42,7 +42,8 @@ namespace AncientTree.Core
         public bool IsBot;
 
         public const int MaxSettlements = 5;
-        public const int TargetScoreToWin = 15;
+        /// <summary>Default target score. Runtime value comes from MatchConfig.Current.TargetScore.</summary>
+        public static int TargetScoreToWin => AncientTree.Core.MatchConfig.Current.TargetScore;
 
         public PlayerData(int index, string name, Color color, Vector2Int startPos, bool isBot = false, int slotIndex = 0)
         {

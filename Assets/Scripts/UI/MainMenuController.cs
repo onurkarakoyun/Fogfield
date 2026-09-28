@@ -65,11 +65,18 @@ namespace AncientTree.UI
         [Header("Settings Panel UI")]
         [SerializeField] private Slider _sfxSlider;
         [SerializeField] private Toggle _sfxMuteToggle;
+        [SerializeField] private TextMeshProUGUI _sfxValueText;
         [SerializeField] private Slider _musicSlider;
         [SerializeField] private Toggle _musicMuteToggle;
+        [SerializeField] private TextMeshProUGUI _musicValueText;
         [SerializeField] private Button _languageToggleButton;
         [SerializeField] private TextMeshProUGUI _languageText;
         [SerializeField] private Button _settingsBackButton;
+
+        [Header("Display Settings UI (PC)")]
+        [SerializeField] private GameObject _displaySettingsSection;
+        [SerializeField] private TMP_Dropdown _resolutionDropdown;
+        [SerializeField] private Toggle _fullscreenToggle;
 
         [Header("Toast / Notification")]
         [SerializeField] private GameObject _toastObject;
@@ -231,21 +238,37 @@ namespace AncientTree.UI
             _sfxSlider?.onValueChanged.AddListener((val) =>
             {
                 SettingsManager.Instance?.SetSfxVolume(val);
+                UpdateAudioValueLabels();
             });
 
             _sfxMuteToggle?.onValueChanged.AddListener((isMuted) =>
             {
                 SettingsManager.Instance?.SetSfxMute(isMuted);
+                UpdateAudioValueLabels();
             });
 
             _musicSlider?.onValueChanged.AddListener((val) =>
             {
                 SettingsManager.Instance?.SetMusicVolume(val);
+                UpdateAudioValueLabels();
             });
 
             _musicMuteToggle?.onValueChanged.AddListener((isMuted) =>
             {
                 SettingsManager.Instance?.SetMusicMute(isMuted);
+                UpdateAudioValueLabels();
+            });
+
+            _resolutionDropdown?.onValueChanged.AddListener((index) =>
+            {
+                AudioManager.Instance?.PlayClick();
+                SettingsManager.Instance?.SetResolution(index);
+            });
+
+            _fullscreenToggle?.onValueChanged.AddListener((isFs) =>
+            {
+                AudioManager.Instance?.PlayClick();
+                SettingsManager.Instance?.SetFullscreen(isFs);
             });
 
             _languageToggleButton?.onClick.AddListener(() =>
@@ -259,7 +282,14 @@ namespace AncientTree.UI
             _settingsBackButton?.onClick.AddListener(() =>
             {
                 AudioManager.Instance?.PlayClick();
-                ShowPanel(_mainButtonsPanel);
+                if (PauseManager.Instance != null && PauseManager.Instance.IsPaused)
+                {
+                    PauseManager.Instance.CloseSettings();
+                }
+                else
+                {
+                    ShowPanel(_mainButtonsPanel);
+                }
             });
         }
 
@@ -340,6 +370,7 @@ namespace AncientTree.UI
             if (state == GameState.Gameplay)
             {
                 if (_howToPlayModal != null) _howToPlayModal.SetActive(false);
+                if (_settingsPanel != null) _settingsPanel.SetActive(false);
                 if (_menuCanvasGroup != null)
                 {
                     _menuCanvasGroup.alpha = 0f;
@@ -350,6 +381,19 @@ namespace AncientTree.UI
             else if (state == GameState.MainMenu)
             {
                 if (_howToPlayModal != null) _howToPlayModal.SetActive(false);
+
+                // If splash / intro screen is active, do not flash menu; stay hidden until splash finishes
+                if (SplashScreenController.Instance != null && !SplashScreenController.Instance.IsFinished)
+                {
+                    if (_menuCanvasGroup != null)
+                    {
+                        _menuCanvasGroup.alpha = 0f;
+                        _menuCanvasGroup.interactable = false;
+                        _menuCanvasGroup.blocksRaycasts = false;
+                    }
+                    return;
+                }
+
                 if (_menuCanvasGroup != null)
                 {
                     _menuCanvasGroup.alpha = 1f;
@@ -534,7 +578,7 @@ namespace AncientTree.UI
             }
         }
 
-        private void SyncSettingsUI()
+        public void SyncSettingsUI()
         {
             if (SettingsManager.Instance != null)
             {
@@ -544,7 +588,59 @@ namespace AncientTree.UI
                 if (_musicMuteToggle != null) _musicMuteToggle.isOn = SettingsManager.Instance.MusicMuted;
             }
 
+            // Display Settings (PC Standalone only)
+            bool isMobile = Application.isMobilePlatform;
+#if UNITY_ANDROID || UNITY_IOS
+            isMobile = true;
+#endif
+            if (_displaySettingsSection != null)
+            {
+                _displaySettingsSection.SetActive(!isMobile);
+            }
+
+            if (!isMobile && SettingsManager.Instance != null && _resolutionDropdown != null)
+            {
+                _resolutionDropdown.ClearOptions();
+                var resolutions = SettingsManager.Instance.UniqueResolutions;
+                if (resolutions != null && resolutions.Length > 0)
+                {
+                    var options = new List<string>();
+                    for (int i = 0; i < resolutions.Length; i++)
+                    {
+                        options.Add($"{resolutions[i].width} x {resolutions[i].height}");
+                    }
+                    _resolutionDropdown.AddOptions(options);
+                    _resolutionDropdown.SetValueWithoutNotify(SettingsManager.Instance.CurrentResolutionIndex);
+                }
+
+                if (_fullscreenToggle != null)
+                {
+                    _fullscreenToggle.SetIsOnWithoutNotify(SettingsManager.Instance.IsFullscreen);
+                }
+            }
+
+            UpdateAudioValueLabels();
             UpdateLanguageDisplay(LocalizationManager.Instance?.CurrentLanguage ?? "TR");
+        }
+
+        private void UpdateAudioValueLabels()
+        {
+            string lang = LocalizationManager.Instance?.CurrentLanguage ?? "TR";
+            string muteText = lang == "EN" ? "Muted" : "Sessiz";
+
+            if (_sfxValueText != null && _sfxSlider != null)
+            {
+                bool isMuted = _sfxMuteToggle != null && _sfxMuteToggle.isOn;
+                _sfxValueText.text = isMuted ? $"[{muteText}]" : $"%{(int)_sfxSlider.value}";
+                _sfxValueText.color = isMuted ? new Color(0.7f, 0.4f, 0.4f) : new Color(0.2f, 0.8f, 1f);
+            }
+
+            if (_musicValueText != null && _musicSlider != null)
+            {
+                bool isMuted = _musicMuteToggle != null && _musicMuteToggle.isOn;
+                _musicValueText.text = isMuted ? $"[{muteText}]" : $"%{(int)_musicSlider.value}";
+                _musicValueText.color = isMuted ? new Color(0.7f, 0.4f, 0.4f) : new Color(0.2f, 0.8f, 1f);
+            }
         }
 
         private void UpdateLanguageDisplay(string lang)

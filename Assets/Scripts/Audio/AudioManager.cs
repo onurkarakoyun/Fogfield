@@ -61,18 +61,27 @@ namespace AncientTree.Audio
 
         private void Start()
         {
+            if (Settings.SettingsManager.Instance != null)
+            {
+                HandleAudioSettingsUpdated(
+                    Settings.SettingsManager.Instance.SfxVolume,
+                    Settings.SettingsManager.Instance.SfxMuted,
+                    Settings.SettingsManager.Instance.MusicVolume,
+                    Settings.SettingsManager.Instance.MusicMuted
+                );
+            }
             StartAmbientMusic();
         }
 
         private void HandleAudioSettingsUpdated(float sfxVol, bool sfxMute, float musicVol, bool musicMute)
         {
-            _sfxVolume = sfxVol / 100f;
+            _sfxVolume = Mathf.Clamp01(sfxVol / 100f);
             _sfxMuted = sfxMute;
-            _musicVolume = musicVol / 100f;
+            _musicVolume = Mathf.Clamp01(musicVol / 100f);
             _musicMuted = musicMute;
 
-            _sfxSource.volume = _sfxMuted ? 0f : _sfxVolume;
-            _musicSource.volume = _musicMuted ? 0f : _musicVolume * 0.35f;
+            if (_sfxSource != null) _sfxSource.volume = _sfxMuted ? 0f : _sfxVolume;
+            if (_musicSource != null) _musicSource.volume = _musicMuted ? 0f : _musicVolume * 0.35f;
         }
 
         private void HandleDiceRolled(int val) => PlayDiceRoll();

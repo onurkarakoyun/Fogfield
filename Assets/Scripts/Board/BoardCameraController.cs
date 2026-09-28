@@ -24,10 +24,26 @@ namespace AncientTree.Board
         [SerializeField] private Vector2 _xBounds = new Vector2(-24f, 24f);
         [SerializeField] private Vector2 _zBounds = new Vector2(-40f, 15f);
 
-        [Header("Zoom Settings")]
+        [Header("Zoom Settings — Orthographic")]
+        [SerializeField] private float _minOrthoSize = 8f;
+        [SerializeField] private float _maxOrthoSize = 26f;
+
+        [Header("Zoom Settings — Perspective")]
+        [SerializeField] private float _minFov = 25f;
+        [SerializeField] private float _maxFov = 65f;
+
+        [Header("Zoom Speed & Damping")]
+        [SerializeField] private float _scrollZoomSpeed = 6f;
+        [SerializeField] private float _pinchZoomSpeed = 0.05f;
+        [SerializeField] private float _zoomDamping = 10f;
+
+        [Header("Height Boundaries (Y — pan only)")]
         [SerializeField] private float _minHeight = 20f;
         [SerializeField] private float _maxHeight = 48f;
-        [SerializeField] private float _zoomSpeed = 4f;
+
+        private float _targetZoom;     // orthographic size OR fov depending on cam mode
+        private float _currentZoom;
+        private bool  _isPinching;
 
         private Camera _cam;
         private Vector3 _targetPosition;
@@ -54,11 +70,24 @@ namespace AncientTree.Board
 
             _targetPosition = transform.position;
             _groundPlane = new Plane(Vector3.up, Vector3.zero);
+
+            // Initialize zoom targets
+            if (_cam.orthographic)
+                _targetZoom = _currentZoom = _cam.orthographicSize;
+            else
+                _targetZoom = _currentZoom = _cam.fieldOfView;
         }
 
         private void Update()
         {
             if (GameManager.Instance != null && GameManager.Instance.CurrentState != GameState.Gameplay)
+            {
+                _isPointerDown = false;
+                _isDragging = false;
+                return;
+            }
+
+            if (AncientTree.UI.PauseManager.Instance != null && AncientTree.UI.PauseManager.Instance.IsPaused)
             {
                 _isPointerDown = false;
                 _isDragging = false;
@@ -74,6 +103,13 @@ namespace AncientTree.Board
             _targetPosition.x = Mathf.Clamp(_targetPosition.x, _xBounds.x, _xBounds.y);
             _targetPosition.z = Mathf.Clamp(_targetPosition.z, _zBounds.x, _zBounds.y);
             _targetPosition.y = Mathf.Clamp(_targetPosition.y, _minHeight, _maxHeight);
+
+            // Smooth zoom apply
+            _currentZoom = Mathf.Lerp(_currentZoom, _targetZoom, Time.deltaTime * _zoomDamping);
+            if (_cam.orthographic)
+                _cam.orthographicSize = _currentZoom;
+            else
+                _cam.fieldOfView = _currentZoom;
 
             // Smooth damping
             transform.position = Vector3.Lerp(transform.position, _targetPosition, Time.deltaTime * _damping);
@@ -103,10 +139,10 @@ namespace AncientTree.Board
                 }
                 else
                 {
-                    // Multi-touch cancel single-finger dragging
+                    // Multi-touch = pinch gesture — cancel pan & tap
                     _isPointerDown = false;
                     _isDragging = false;
-                    return;
+                    return; // DO NOT process pan or tile clicks while pinching
                 }
             }
             // Mouse input (PC)
@@ -184,37 +220,45 @@ namespace AncientTree.Board
 
         private void HandleZoom()
         {
-            float scroll = 0f;
+            _isPinching = false;
+            float delta = 0f;
 
-            // Mouse wheel
-            if (Mouse.current != null)
+            // --- PC: Mouse scroll wheel ---
+            if (UnityEngine.InputSystem.Mouse.current != null)
             {
-                scroll = Mouse.current.scroll.ReadValue().y * 0.01f;
+                float scroll = UnityEngine.InputSystem.Mouse.current.scroll.ReadValue().y;
+                if (Mathf.Abs(scroll) > 0.1f)
+                    delta = -scroll * 0.01f * _scrollZoomSpeed; // negative: scroll up = zoom in
             }
 
-            // Mobile 2-finger pinch
-            if (Touchscreen.current != null && Touchscreen.current.touches.Count >= 2)
+            // --- Mobile: 2-finger pinch ---
+            if (UnityEngine.InputSystem.Touchscreen.current != null &&
+                UnityEngine.InputSystem.Touchscreen.current.touches.Count >= 2)
             {
-                var t0 = Touchscreen.current.touches[0];
-                var t1 = Touchscreen.current.touches[1];
+                _isPinching = true;
+                var t0 = UnityEngine.InputSystem.Touchscreen.current.touches[0];
+                var t1 = UnityEngine.InputSystem.Touchscreen.current.touches[1];
 
                 Vector2 prevPos0 = t0.position.ReadValue() - t0.delta.ReadValue();
                 Vector2 prevPos1 = t1.position.ReadValue() - t1.delta.ReadValue();
-
                 float prevDist = Vector2.Distance(prevPos0, prevPos1);
-                float curDist = Vector2.Distance(t0.position.ReadValue(), t1.position.ReadValue());
-                scroll = (curDist - prevDist) * 0.02f;
+                float curDist  = Vector2.Distance(t0.position.ReadValue(), t1.position.ReadValue());
+                float pinchDelta = prevDist - curDist; // positive = fingers moving closer = zoom out
+                delta = pinchDelta * _pinchZoomSpeed;
             }
 
-            if (Mathf.Abs(scroll) > 0.01f)
+            if (Mathf.Abs(delta) > 0.0001f)
             {
-                Vector3 zoomDelta = transform.forward * (scroll * _zoomSpeed);
-                _targetPosition += zoomDelta;
+                if (_cam.orthographic)
+                    _targetZoom = Mathf.Clamp(_targetZoom + delta, _minOrthoSize, _maxOrthoSize);
+                else
+                    _targetZoom = Mathf.Clamp(_targetZoom + delta, _minFov, _maxFov);
             }
         }
 
         private void ExecuteTileClick(Vector2 screenPos)
         {
+            if (_isPinching) return; // Strictly block tile clicks during pinch zoom
             if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
             if (TurnManager.Instance == null || TurnManager.Instance.IsActionLocked) return;
 

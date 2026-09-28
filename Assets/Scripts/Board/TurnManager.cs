@@ -284,6 +284,7 @@ namespace AncientTree.Board
         public void OnTileClicked(TileController clickedTile)
         {
             if (GameManager.Instance != null && GameManager.Instance.CurrentState != GameState.Gameplay) return;
+            if (AncientTree.UI.PauseManager.Instance != null && AncientTree.UI.PauseManager.Instance.IsPaused) return;
             if (clickedTile == null || _isActionLocked) return;
 
             // Relocation mode: player clicks one of their old settlements to dismantle and place onto their current tile
@@ -529,11 +530,11 @@ namespace AncientTree.Board
                 GameEvents.TriggerPlayerScoreUpdated(player.PlayerIndex, player.TotalScore);
             }
 
-            // 2. Victory check: First player to reach >= 15 points wins; if multiple, highest score wins
+            // 2. Victory check: First player to reach >= TargetScore wins; if multiple, highest score wins
             List<PlayerData> potentialWinners = new List<PlayerData>();
             foreach (var p in _players)
             {
-                if (p.TotalScore >= PlayerData.TargetScoreToWin)
+                if (p.TotalScore >= AncientTree.Core.MatchConfig.Current.TargetScore)
                 {
                     potentialWinners.Add(p);
                 }

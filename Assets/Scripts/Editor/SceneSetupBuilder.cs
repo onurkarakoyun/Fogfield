@@ -34,6 +34,7 @@ namespace AncientTree.Editor
 
             // Mark scene dirty and save
             UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
+            UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
             Debug.Log("<color=green><b>[Kadim Ağaç]</b> Tam sahne kurulumu başarıyla tamamlandı!</color>");
         }
 
@@ -92,8 +93,13 @@ namespace AncientTree.Editor
             if (tableCol != null) UnityEngine.Object.DestroyImmediate(tableCol);
 
             var rend = table.GetComponent<MeshRenderer>();
-            var mat = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
-            mat.color = new Color(0.18f, 0.16f, 0.15f); // Dark rich mahogany wood
+            var mat = Resources.Load<Material>("Materials/TableMaterial");
+            if (mat == null)
+            {
+                var s = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+                mat = new Material(s);
+                mat.color = new Color(0.18f, 0.16f, 0.15f); // Dark rich mahogany wood
+            }
             rend.material = mat;
         }
 
@@ -120,6 +126,7 @@ namespace AncientTree.Editor
             var turnMgr = GetOrAdd<TurnManager>(managersObj);
             var settMgr = GetOrAdd<SettlementManager>(managersObj);
             var boardInter = GetOrAdd<BoardInteraction>(managersObj);
+            var pauseMgr = GetOrAdd<PauseManager>(managersObj);
 
             // Board container (Board_Container / GridRoot)
             GameObject boardContainer = GameObject.Find("Board_Container") ?? GameObject.Find("BoardTiles");
@@ -217,23 +224,33 @@ namespace AncientTree.Editor
                 UnityEngine.Object.DestroyImmediate(canvasObj.transform.GetChild(i).gameObject);
             }
 
-            // 1. MAIN MENU
-            BuildMainMenuUI(canvasObj.transform, managersObj);
+            // 1. MAIN MENU (creates settingsPanel directly under canvasRoot)
+            var (menuRoot, menuCg, settingsPanel) = BuildMainMenuUI(canvasObj.transform, managersObj);
 
-            // 2. IN-GAME HUD
-            BuildInGameHUDUI(canvasObj.transform, managersObj);
+            // 2. IN-GAME HUD (returns HUD pause button)
+            var hudPauseBtn = BuildInGameHUDUI(canvasObj.transform, managersObj);
+
+            // 3. PAUSE MENU & MODAL
+            BuildPauseMenuUI(canvasObj.transform, managersObj, settingsPanel, hudPauseBtn);
+
+            // 4. SPLASH / INTRO SCREEN (topmost child, sortingOrder 999)
+            BuildSplashScreenUI(canvasObj.transform, managersObj, menuRoot, menuCg);
         }
 
-        private static void BuildMainMenuUI(Transform canvasRoot, GameObject managersObj)
+        private static (GameObject root, CanvasGroup cg, GameObject settingsPanel) BuildMainMenuUI(Transform canvasRoot, GameObject managersObj)
         {
             GameObject menuRoot = CreateUIPanel("MainMenuRoot", canvasRoot, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0.08f, 0.1f, 0.15f, 0.85f));
             var menuCg = menuRoot.AddComponent<CanvasGroup>();
+            menuCg.alpha = 0f;
+            menuCg.interactable = false;
+            menuCg.blocksRaycasts = false;
+            menuRoot.SetActive(false);
 
-            // Title: Fogfield
+            // Title: Fogfield (Clean, no subtitle)
             GameObject titleObj = CreateUIText("GameTitle", menuRoot.transform, "FOGFIELD", 64, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
             RectTransform titleRt = titleObj.GetComponent<RectTransform>();
-            titleRt.anchorMin = new Vector2(0.5f, 0.83f);
-            titleRt.anchorMax = new Vector2(0.5f, 0.83f);
+            titleRt.anchorMin = new Vector2(0.5f, 0.82f);
+            titleRt.anchorMax = new Vector2(0.5f, 0.82f);
             titleRt.sizeDelta = new Vector2(800, 80);
             titleObj.AddComponent<LocalizedText>().LocalizationKey = "GAME_TITLE";
 
@@ -245,15 +262,8 @@ namespace AncientTree.Editor
             titleShadow.effectColor = new Color(0.02f, 0.05f, 0.1f, 0.95f);
             titleShadow.effectDistance = new Vector2(4f, -4f);
 
-            GameObject subtitleObj = CreateUIText("Subtitle", menuRoot.transform, "Sıra Tabanlı Sisli Keşif & Yerleşke", 22, FontStyles.Italic, new Color(0.88f, 0.84f, 0.68f), TextAlignmentOptions.Center);
-            RectTransform subRt = subtitleObj.GetComponent<RectTransform>();
-            subRt.anchorMin = new Vector2(0.5f, 0.76f);
-            subRt.anchorMax = new Vector2(0.5f, 0.76f);
-            subRt.sizeDelta = new Vector2(600, 36);
-            subtitleObj.AddComponent<LocalizedText>().LocalizationKey = "GAME_SUBTITLE";
-
             // Panels container
-            GameObject centerArea = CreateUIPanel("CenterArea", menuRoot.transform, new Vector2(0.5f, 0.44f), new Vector2(0.5f, 0.44f), Vector2.zero, new Vector2(500, 460), Color.clear);
+            GameObject centerArea = CreateUIPanel("CenterArea", menuRoot.transform, new Vector2(0.5f, 0.44f), new Vector2(0.5f, 0.44f), Vector2.zero, new Vector2(580, 500), Color.clear);
 
             // A. MAIN BUTTONS PANEL
             GameObject mainPanel = CreateUIPanel("MainButtonsPanel", centerArea.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, Color.clear);
@@ -315,34 +325,212 @@ namespace AncientTree.Editor
             var selectedTxt = CreateUIText("SelectedPlayersText", playerSelectPanel.transform, "Aktif Oyuncular: 2 (1 İnsan, 1 Bot)", 18, FontStyles.Normal, new Color(1f, 0.85f, 0.3f), TextAlignmentOptions.Center);
             SetRect(selectedTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, -22), new Vector2(420, 28));
 
-            var startBtn = CreateStyledButton("StartGameButton", playerSelectPanel.transform, "Oyuna Başla", new Vector2(0, -75), new Vector2(280, 52), new Color(0.18f, 0.65f, 0.3f), "BTN_START");
-            var pBackBtn = CreateStyledButton("PlayerSelectBackButton", playerSelectPanel.transform, "Geri", new Vector2(0, -135), new Vector2(200, 42), new Color(0.3f, 0.3f, 0.3f), "BTN_BACK");
+            var startBtn = CreateStyledButton("StartGameButton", playerSelectPanel.transform, "Oyuna Başla", new Vector2(-95, -75), new Vector2(170, 50), new Color(0.18f, 0.65f, 0.3f), "BTN_START");
+            var matchSettingsOpenBtn = CreateStyledButton("MatchSettingsOpenBtn", playerSelectPanel.transform, "⚙ Maç Ayarları", new Vector2(95, -75), new Vector2(170, 50), new Color(0.22f, 0.34f, 0.48f));
+            var pBackBtn = CreateStyledButton("PlayerSelectBackButton", playerSelectPanel.transform, "Geri", new Vector2(0, -135), new Vector2(200, 40), new Color(0.3f, 0.3f, 0.3f), "BTN_BACK");
 
-            // D. SETTINGS PANEL
-            GameObject settingsPanel = CreateUIPanel("SettingsPanel", centerArea.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, Color.clear);
+            // D. SETTINGS PANEL (placed directly under canvasRoot so it is accessible from both Main Menu and in-game Pause)
+            GameObject settingsPanel = CreateUIPanel("SettingsPanel", canvasRoot, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(580, 480), new Color(0.09f, 0.11f, 0.16f, 0.98f));
+            var setOutline = settingsPanel.AddComponent<Outline>();
+            setOutline.effectColor = new Color(0.25f, 0.55f, 0.75f, 0.7f);
+            setOutline.effectDistance = new Vector2(2f, -2f);
+
+            var setAccent = CreateUIPanel("AccentBar", settingsPanel.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -6), new Vector2(540, 4), new Color(0.25f, 0.65f, 0.85f));
             settingsPanel.SetActive(false);
 
-            var setHeader = CreateUIText("SettingsHeader", settingsPanel.transform, "Oyun Ayarları", 28, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
-            SetRect(setHeader.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, 140), new Vector2(400, 40));
+            // Title
+            var setHeader = CreateUIText("SettingsHeader", settingsPanel.transform, "Oyun Ayarları", 25, FontStyles.Bold, new Color(1f, 0.85f, 0.25f), TextAlignmentOptions.Center);
+            SetRect(setHeader.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -32), new Vector2(500, 36));
             setHeader.AddComponent<LocalizedText>().LocalizationKey = "SETTINGS_TITLE";
 
-            // SFX Slider & Mute
-            var sfxTxt = CreateUIText("SfxLabel", settingsPanel.transform, "Ses Efektleri (SFX)", 18, FontStyles.Normal, Color.white, TextAlignmentOptions.Left);
-            SetRect(sfxTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-60, 95), new Vector2(200, 30));
+            // Main rows container (VerticalLayoutGroup)
+            GameObject settingsContent = CreateUIPanel("Settings_Content", settingsPanel.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, -18), new Vector2(560, 380), Color.clear);
+            var vlg = settingsContent.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = 14f;
+            vlg.childAlignment = TextAnchor.UpperCenter;
+            vlg.childControlWidth = false;
+            vlg.childControlHeight = false;
+            vlg.childForceExpandWidth = false;
+            vlg.childForceExpandHeight = false;
+
+            // 1. SFX ROW (Col 1: 200px, Col 2: 260px, Col 3: 32px)
+            GameObject sfxRow = CreateUIPanel("SFX_Row", settingsContent.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(520, 32), Color.clear);
+            var sfxHlg = sfxRow.AddComponent<HorizontalLayoutGroup>();
+            sfxHlg.spacing = 14f;
+            sfxHlg.padding = new RectOffset(0, 0, 0, 0);
+            sfxHlg.childAlignment = TextAnchor.MiddleLeft;
+            sfxHlg.childControlWidth = false;
+            sfxHlg.childControlHeight = false;
+            sfxHlg.childForceExpandWidth = false;
+            sfxHlg.childForceExpandHeight = false;
+            var sfxRowLe = sfxRow.AddComponent<LayoutElement>();
+            sfxRowLe.preferredWidth = 520f;
+            sfxRowLe.preferredHeight = 32f;
+
+            // Sütun 1: Label Container (200px)
+            GameObject sfxLblContainer = CreateUIPanel("SfxLabelContainer", sfxRow.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(200, 30), Color.clear);
+            var sfxLblLe = sfxLblContainer.AddComponent<LayoutElement>();
+            sfxLblLe.preferredWidth = 200f;
+            sfxLblLe.preferredHeight = 30f;
+
+            var sfxTxt = CreateUIText("SfxLabel", sfxLblContainer.transform, "Ses Efektleri", 16, FontStyles.Normal, Color.white, TextAlignmentOptions.MidlineLeft);
+            SetRect(sfxTxt.GetComponent<RectTransform>(), new Vector2(0f, 0.5f), new Vector2(70, 0), new Vector2(140, 26));
             sfxTxt.AddComponent<LocalizedText>().LocalizationKey = "SFX_VOLUME";
-            var sfxSliderObj = CreateSlider("SfxSlider", settingsPanel.transform, new Vector2(0.5f, 0.5f), new Vector2(-40, 65), new Vector2(260, 24));
-            var sfxMuteToggleObj = CreateToggle("SfxMuteToggle", settingsPanel.transform, "Mute", new Vector2(0.5f, 0.5f), new Vector2(140, 65));
+            sfxTxt.GetComponent<TextMeshProUGUI>().overflowMode = TextOverflowModes.Ellipsis;
 
-            // Music Slider & Mute
-            var musicTxt = CreateUIText("MusicLabel", settingsPanel.transform, "Müzik", 18, FontStyles.Normal, Color.white, TextAlignmentOptions.Left);
-            SetRect(musicTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-60, 25), new Vector2(200, 30));
+            var sfxValTxt = CreateUIText("SfxValueText", sfxLblContainer.transform, "%80", 15, FontStyles.Bold, new Color(0.2f, 0.8f, 1f), TextAlignmentOptions.MidlineRight);
+            SetRect(sfxValTxt.GetComponent<RectTransform>(), new Vector2(1f, 0.5f), new Vector2(-25, 0), new Vector2(50, 26));
+
+            // Sütun 2: Slider (260px x 28px)
+            var sfxSliderObj = CreateSlider("SfxSlider", sfxRow.transform, Vector2.zero, Vector2.zero, new Vector2(260, 28));
+
+            // Sütun 3: Mute Toggle (32px x 32px)
+            var sfxMuteToggleObj = CreateToggle("SfxMuteToggle", sfxRow.transform, null, Vector2.zero, Vector2.zero, "MUTE", 32f, 32f);
+
+            // 2. MUSIC ROW (Col 1: 200px, Col 2: 260px, Col 3: 32px)
+            GameObject musicRow = CreateUIPanel("Music_Row", settingsContent.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(520, 32), Color.clear);
+            var musicHlg = musicRow.AddComponent<HorizontalLayoutGroup>();
+            musicHlg.spacing = 14f;
+            musicHlg.padding = new RectOffset(0, 0, 0, 0);
+            musicHlg.childAlignment = TextAnchor.MiddleLeft;
+            musicHlg.childControlWidth = false;
+            musicHlg.childControlHeight = false;
+            musicHlg.childForceExpandWidth = false;
+            musicHlg.childForceExpandHeight = false;
+            var musicRowLe = musicRow.AddComponent<LayoutElement>();
+            musicRowLe.preferredWidth = 520f;
+            musicRowLe.preferredHeight = 32f;
+
+            // Sütun 1: Label Container (200px)
+            GameObject musicLblContainer = CreateUIPanel("MusicLabelContainer", musicRow.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(200, 30), Color.clear);
+            var musicLblLe = musicLblContainer.AddComponent<LayoutElement>();
+            musicLblLe.preferredWidth = 200f;
+            musicLblLe.preferredHeight = 30f;
+
+            var musicTxt = CreateUIText("MusicLabel", musicLblContainer.transform, "Müzik", 16, FontStyles.Normal, Color.white, TextAlignmentOptions.MidlineLeft);
+            SetRect(musicTxt.GetComponent<RectTransform>(), new Vector2(0f, 0.5f), new Vector2(70, 0), new Vector2(140, 26));
             musicTxt.AddComponent<LocalizedText>().LocalizationKey = "MUSIC_VOLUME";
-            var musicSliderObj = CreateSlider("MusicSlider", settingsPanel.transform, new Vector2(0.5f, 0.5f), new Vector2(-40, -5), new Vector2(260, 24));
-            var musicMuteToggleObj = CreateToggle("MusicMuteToggle", settingsPanel.transform, "Mute", new Vector2(0.5f, 0.5f), new Vector2(140, -5));
+            musicTxt.GetComponent<TextMeshProUGUI>().overflowMode = TextOverflowModes.Ellipsis;
 
-            // Language Switcher
-            var langBtn = CreateStyledButton("LanguageToggleButton", settingsPanel.transform, "Dil: Türkçe (TR)", new Vector2(0, -65), new Vector2(260, 48), new Color(0.2f, 0.4f, 0.55f));
-            var setBackBtn = CreateStyledButton("SettingsBackButton", settingsPanel.transform, "Geri", new Vector2(0, -130), new Vector2(200, 45), new Color(0.3f, 0.3f, 0.3f), "BTN_BACK");
+            var musicValTxt = CreateUIText("MusicValueText", musicLblContainer.transform, "%70", 15, FontStyles.Bold, new Color(0.2f, 0.8f, 1f), TextAlignmentOptions.MidlineRight);
+            SetRect(musicValTxt.GetComponent<RectTransform>(), new Vector2(1f, 0.5f), new Vector2(-25, 0), new Vector2(50, 26));
+
+            // Sütun 2: Slider (260px x 28px)
+            var musicSliderObj = CreateSlider("MusicSlider", musicRow.transform, Vector2.zero, Vector2.zero, new Vector2(260, 28));
+
+            // Sütun 3: Mute Toggle (32px x 32px)
+            var musicMuteToggleObj = CreateToggle("MusicMuteToggle", musicRow.transform, null, Vector2.zero, Vector2.zero, "MUTE", 32f, 32f);
+
+            // 3. DISPLAY SECTION (PC Standalone only - contains Resolution_Row and DisplayMode_Row)
+            GameObject displaySection = CreateUIPanel("DisplaySettingsSection", settingsContent.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(520, 78), Color.clear);
+            var dispVlg = displaySection.AddComponent<VerticalLayoutGroup>();
+            dispVlg.spacing = 14f;
+            dispVlg.childAlignment = TextAnchor.UpperCenter;
+            dispVlg.childControlWidth = false;
+            dispVlg.childControlHeight = false;
+            dispVlg.childForceExpandWidth = false;
+            dispVlg.childForceExpandHeight = false;
+            var dispRowLe = displaySection.AddComponent<LayoutElement>();
+            dispRowLe.preferredWidth = 520f;
+            dispRowLe.preferredHeight = 78f;
+
+            // 3A. RESOLUTION ROW (Col 1: 200px, Col 2: 260px, Col 3: 32px)
+            GameObject resRow = CreateUIPanel("Resolution_Row", displaySection.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(520, 32), Color.clear);
+            var resHlg = resRow.AddComponent<HorizontalLayoutGroup>();
+            resHlg.spacing = 14f;
+            resHlg.padding = new RectOffset(0, 0, 0, 0);
+            resHlg.childAlignment = TextAnchor.MiddleLeft;
+            resHlg.childControlWidth = false;
+            resHlg.childControlHeight = false;
+            resHlg.childForceExpandWidth = false;
+            resHlg.childForceExpandHeight = false;
+            var resRowLe = resRow.AddComponent<LayoutElement>();
+            resRowLe.preferredWidth = 520f;
+            resRowLe.preferredHeight = 32f;
+
+            // Sütun 1: Label (200px)
+            var displayTxt = CreateUIText("DisplayLabel", resRow.transform, "Çözünürlük", 16, FontStyles.Normal, Color.white, TextAlignmentOptions.MidlineLeft);
+            SetRect(displayTxt.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero, new Vector2(200, 30));
+            displayTxt.AddComponent<LocalizedText>().LocalizationKey = "RESOLUTION";
+            displayTxt.GetComponent<TextMeshProUGUI>().overflowMode = TextOverflowModes.Ellipsis;
+            var dispLe = displayTxt.AddComponent<LayoutElement>();
+            dispLe.preferredWidth = 200f;
+            dispLe.preferredHeight = 30f;
+
+            // Sütun 2: Dropdown (260px x 28px)
+            var resDropdownObj = CreateTMPDropdown("ResolutionDropdown", resRow.transform, Vector2.zero, Vector2.zero, new Vector2(260, 28));
+
+            // Sütun 3: Spacer (32px x 32px for uniform columnar alignment)
+            GameObject resSpacer = CreateUIPanel("ResSpacer", resRow.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(32, 32), Color.clear);
+            var resSpacerLe = resSpacer.AddComponent<LayoutElement>();
+            resSpacerLe.preferredWidth = 32f;
+            resSpacerLe.preferredHeight = 32f;
+
+            // 3B. DISPLAY MODE ROW (Col 1: 200px, Col 2: 260px, Col 3: 32px)
+            GameObject dispModeRow = CreateUIPanel("DisplayMode_Row", displaySection.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(520, 32), Color.clear);
+            var dispModeHlg = dispModeRow.AddComponent<HorizontalLayoutGroup>();
+            dispModeHlg.spacing = 14f;
+            dispModeHlg.padding = new RectOffset(0, 0, 0, 0);
+            dispModeHlg.childAlignment = TextAnchor.MiddleLeft;
+            dispModeHlg.childControlWidth = false;
+            dispModeHlg.childControlHeight = false;
+            dispModeHlg.childForceExpandWidth = false;
+            dispModeHlg.childForceExpandHeight = false;
+            var dispModeRowLe = dispModeRow.AddComponent<LayoutElement>();
+            dispModeRowLe.preferredWidth = 520f;
+            dispModeRowLe.preferredHeight = 32f;
+
+            // Sütun 1: Label (200px)
+            var dispModeTxt = CreateUIText("DisplayModeLabel", dispModeRow.transform, "Ekran Modu", 16, FontStyles.Normal, Color.white, TextAlignmentOptions.MidlineLeft);
+            SetRect(dispModeTxt.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero, new Vector2(200, 30));
+            dispModeTxt.AddComponent<LocalizedText>().LocalizationKey = "DISPLAY_MODE";
+            dispModeTxt.GetComponent<TextMeshProUGUI>().overflowMode = TextOverflowModes.Ellipsis;
+            var dispModeLe = dispModeTxt.AddComponent<LayoutElement>();
+            dispModeLe.preferredWidth = 200f;
+            dispModeLe.preferredHeight = 30f;
+
+            // Sütun 2: Fullscreen Toggle (260px x 28px)
+            var fsToggleObj = CreateToggle("FullscreenToggle", dispModeRow.transform, "Tam Ekran", Vector2.zero, Vector2.zero, "FULLSCREEN", 260f, 28f);
+
+            // Sütun 3: Spacer (32px x 32px for uniform columnar alignment)
+            GameObject fsSpacer = CreateUIPanel("FsSpacer", dispModeRow.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(32, 32), Color.clear);
+            var fsSpacerLe = fsSpacer.AddComponent<LayoutElement>();
+            fsSpacerLe.preferredWidth = 32f;
+            fsSpacerLe.preferredHeight = 32f;
+
+            // 4. LANGUAGE ROW
+            GameObject langRow = CreateUIPanel("Language_Row", settingsContent.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(520, 40), Color.clear);
+            var langHlg = langRow.AddComponent<HorizontalLayoutGroup>();
+            langHlg.childAlignment = TextAnchor.MiddleCenter;
+            langHlg.childControlWidth = false;
+            langHlg.childControlHeight = false;
+            langHlg.childForceExpandWidth = false;
+            langHlg.childForceExpandHeight = false;
+            var langRowLe = langRow.AddComponent<LayoutElement>();
+            langRowLe.preferredWidth = 520f;
+            langRowLe.preferredHeight = 40f;
+
+            var langBtn = CreateStyledButton("LanguageToggleButton", langRow.transform, "Dil: Türkçe (TR)", Vector2.zero, new Vector2(260, 40), new Color(0.2f, 0.4f, 0.55f));
+            var langBtnLe = langBtn.AddComponent<LayoutElement>();
+            langBtnLe.preferredWidth = 260f;
+            langBtnLe.preferredHeight = 40f;
+
+            // 5. BACK BUTTON ROW
+            GameObject backRow = CreateUIPanel("BackButton_Row", settingsContent.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(520, 38), Color.clear);
+            var backHlg = backRow.AddComponent<HorizontalLayoutGroup>();
+            backHlg.childAlignment = TextAnchor.MiddleCenter;
+            backHlg.childControlWidth = false;
+            backHlg.childControlHeight = false;
+            backHlg.childForceExpandWidth = false;
+            backHlg.childForceExpandHeight = false;
+            var backRowLe = backRow.AddComponent<LayoutElement>();
+            backRowLe.preferredWidth = 520f;
+            backRowLe.preferredHeight = 38f;
+
+            var setBackBtn = CreateStyledButton("SettingsBackButton", backRow.transform, "Geri", Vector2.zero, new Vector2(200, 38), new Color(0.3f, 0.3f, 0.3f), "BTN_BACK");
+            var backBtnLe = setBackBtn.AddComponent<LayoutElement>();
+            backBtnLe.preferredWidth = 200f;
+            backBtnLe.preferredHeight = 38f;
 
             // Toast / Notification
             GameObject toastObj = CreateUIPanel("ToastNotification", menuRoot.transform, new Vector2(0.5f, 0.15f), new Vector2(0.5f, 0.15f), Vector2.zero, new Vector2(360, 60), new Color(0.1f, 0.1f, 0.15f, 0.95f));
@@ -405,6 +593,70 @@ namespace AncientTree.Editor
             examplePage.SetActive(false);
             howToPlayModal.SetActive(false);
 
+            // F. MATCH SETTINGS MODAL WINDOW
+            GameObject matchSettingsModal = CreateUIPanel("MatchSettingsModal", menuRoot.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0.04f, 0.06f, 0.1f, 0.90f), raycastTarget: true);
+            var msCg = matchSettingsModal.AddComponent<CanvasGroup>();
+
+            GameObject msCard = CreateUIPanel("MatchSettingsCard", matchSettingsModal.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(740, 560), new Color(0.10f, 0.12f, 0.17f, 0.98f));
+            var msOutline = msCard.AddComponent<Outline>();
+            msOutline.effectColor = new Color(0.25f, 0.55f, 0.75f, 0.7f);
+            msOutline.effectDistance = new Vector2(2f, -2f);
+
+            var msAccent = CreateUIPanel("AccentBar", msCard.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -8), new Vector2(700, 5), new Color(0.25f, 0.65f, 0.85f));
+
+            var msTitle = CreateUIText("ModalTitle", msCard.transform, "⚙ MAÇ & KURAL AYARLARI", 26, FontStyles.Bold, new Color(1f, 0.85f, 0.25f), TextAlignmentOptions.Center);
+            SetRect(msTitle.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -32), new Vector2(500, 36));
+
+            // Close button (X) top right - ensure on top
+            var msCloseXBtn = CreateStyledButton("CloseXButton", msCard.transform, "X", new Vector2(330, 245), new Vector2(38, 38), new Color(0.65f, 0.25f, 0.25f));
+            msCloseXBtn.transform.SetAsLastSibling();
+
+            // 1. TARGET SCORE SECTION
+            var scoreLbl = CreateUIText("TargetScoreLabel", msCard.transform, "Hedef Puan: 50", 17, FontStyles.Bold, Color.white, TextAlignmentOptions.Left);
+            SetRect(scoreLbl.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-60, 165), new Vector2(320, 28));
+
+            var scoreDecBtn = CreateStyledButton("ScoreDecBtn", msCard.transform, "-5", new Vector2(-195, 130), new Vector2(46, 32), new Color(0.35f, 0.22f, 0.22f));
+            var scoreSliderObj = CreateSlider("TargetScoreSlider", msCard.transform, new Vector2(0.5f, 0.5f), new Vector2(-15, 130), new Vector2(300, 24));
+            var scoreIncBtn = CreateStyledButton("ScoreIncBtn", msCard.transform, "+5", new Vector2(165, 130), new Vector2(46, 32), new Color(0.22f, 0.38f, 0.25f));
+
+            // 2. MOUNTAIN COUNT SECTION
+            var mntLbl = CreateUIText("MountainLabel", msCard.transform, "Geçilmez Dağ: 24", 17, FontStyles.Bold, Color.white, TextAlignmentOptions.Left);
+            SetRect(mntLbl.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-60, 85), new Vector2(320, 28));
+
+            var mntDecBtn = CreateStyledButton("MntDecBtn", msCard.transform, "-1", new Vector2(-195, 50), new Vector2(46, 32), new Color(0.35f, 0.22f, 0.22f));
+            var mntSliderObj = CreateSlider("MountainSlider", msCard.transform, new Vector2(0.5f, 0.5f), new Vector2(-15, 50), new Vector2(300, 24));
+            var mntIncBtn = CreateStyledButton("MntIncBtn", msCard.transform, "+1", new Vector2(165, 50), new Vector2(46, 32), new Color(0.22f, 0.38f, 0.25f));
+
+            // 3. GLIMMER COUNT SECTION
+            var glmLbl = CreateUIText("GlimmerLabel", msCard.transform, "Parıltılı Sis: 7", 17, FontStyles.Bold, Color.white, TextAlignmentOptions.Left);
+            SetRect(glmLbl.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-60, 5), new Vector2(320, 28));
+
+            var glmDecBtn = CreateStyledButton("GlmDecBtn", msCard.transform, "-1", new Vector2(-195, -30), new Vector2(46, 32), new Color(0.35f, 0.22f, 0.22f));
+            var glmSliderObj = CreateSlider("GlimmerSlider", msCard.transform, new Vector2(0.5f, 0.5f), new Vector2(-15, -30), new Vector2(300, 24));
+            var glmIncBtn = CreateStyledButton("GlmIncBtn", msCard.transform, "+1", new Vector2(165, -30), new Vector2(46, 32), new Color(0.22f, 0.38f, 0.25f));
+
+            // 4. BALANCE INFO CONTAINER
+            GameObject balBox = CreateUIPanel("BalanceBox", msCard.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, -90), new Vector2(660, 56), new Color(0.07f, 0.09f, 0.13f, 0.9f));
+            var balTxt = CreateUIText("BalanceText", balBox.transform, "Dağ: 24 | Parıltı: 7 | Çorak: 45 | Verimli: 32 | Vadi: 12", 13.5f, FontStyles.Normal, new Color(0.75f, 0.88f, 1f), TextAlignmentOptions.Center);
+            SetRect(balTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(640, 50));
+
+            // 5. PRESETS
+            var pStdBtn = CreateStyledButton("PresetStandardBtn", msCard.transform, "📋 Standart\n(50P / 24D / 7P)", new Vector2(-190, -165), new Vector2(170, 48), new Color(0.18f, 0.45f, 0.65f));
+            var pLabBtn = CreateStyledButton("PresetLabyrinthBtn", msCard.transform, "⛰ Labirent\n(60P / 32D / 5P)", new Vector2(0, -165), new Vector2(170, 48), new Color(0.48f, 0.32f, 0.22f));
+            var pBltBtn = CreateStyledButton("PresetBlitzBtn", msCard.transform, "⚡ Hızlı\n(35P / 15D / 10P)", new Vector2(190, -165), new Vector2(170, 48), new Color(0.25f, 0.55f, 0.35f));
+
+            foreach (var b in new[] { pStdBtn, pLabBtn, pBltBtn })
+            {
+                var txt = b.GetComponentInChildren<TextMeshProUGUI>();
+                if (txt != null) { txt.fontSize = 12f; txt.lineSpacing = 2f; }
+            }
+
+            // 6. ACTION BUTTONS (Reset & Apply)
+            var msApplyBtn = CreateStyledButton("MatchApplyBtn", msCard.transform, "Uygula & Kapat", new Vector2(-80, -235), new Vector2(200, 44), new Color(0.18f, 0.62f, 0.32f));
+            var msResetBtn = CreateStyledButton("MatchResetBtn", msCard.transform, "Varsayılana Sıfırla", new Vector2(120, -235), new Vector2(170, 44), new Color(0.32f, 0.32f, 0.38f));
+
+            matchSettingsModal.SetActive(false);
+
             // Wire MainMenuController
             var menuCtrl = GetOrAdd<MainMenuController>(managersObj);
             SetField(menuCtrl, "_menuCanvasGroup", menuCg);
@@ -443,8 +695,15 @@ namespace AncientTree.Editor
 
             SetField(menuCtrl, "_sfxSlider", sfxSliderObj.GetComponent<Slider>());
             SetField(menuCtrl, "_sfxMuteToggle", sfxMuteToggleObj.GetComponent<Toggle>());
+            SetField(menuCtrl, "_sfxValueText", sfxValTxt.GetComponent<TextMeshProUGUI>());
             SetField(menuCtrl, "_musicSlider", musicSliderObj.GetComponent<Slider>());
             SetField(menuCtrl, "_musicMuteToggle", musicMuteToggleObj.GetComponent<Toggle>());
+            SetField(menuCtrl, "_musicValueText", musicValTxt.GetComponent<TextMeshProUGUI>());
+
+            SetField(menuCtrl, "_displaySettingsSection", displaySection);
+            SetField(menuCtrl, "_resolutionDropdown", resDropdownObj.GetComponent<TMPro.TMP_Dropdown>());
+            SetField(menuCtrl, "_fullscreenToggle", fsToggleObj.GetComponent<Toggle>());
+
             SetField(menuCtrl, "_languageToggleButton", langBtn.GetComponent<Button>());
             SetField(menuCtrl, "_languageText", langBtn.GetComponentInChildren<TextMeshProUGUI>());
             SetField(menuCtrl, "_settingsBackButton", setBackBtn.GetComponent<Button>());
@@ -452,9 +711,41 @@ namespace AncientTree.Editor
             SetField(menuCtrl, "_toastObject", toastObj);
             SetField(menuCtrl, "_toastText", toastTxt.GetComponent<TextMeshProUGUI>());
             SetField(menuCtrl, "_toastCanvasGroup", toastCg);
+
+            // Wire MatchSettingsPanelController
+            var matchCtrl = GetOrAdd<MatchSettingsPanelController>(managersObj);
+            SetField(matchCtrl, "_panel", matchSettingsModal);
+            SetField(matchCtrl, "_panelCanvasGroup", msCg);
+            SetField(matchCtrl, "_openButton", matchSettingsOpenBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_closeButton", msApplyBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_closeXButton", msCloseXBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_resetButton", msResetBtn.GetComponent<Button>());
+
+            SetField(matchCtrl, "_targetScoreSlider", scoreSliderObj.GetComponent<Slider>());
+            SetField(matchCtrl, "_scoreDecBtn", scoreDecBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_scoreIncBtn", scoreIncBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_targetScoreLabel", scoreLbl.GetComponent<TextMeshProUGUI>());
+
+            SetField(matchCtrl, "_mountainSlider", mntSliderObj.GetComponent<Slider>());
+            SetField(matchCtrl, "_mountainDecBtn", mntDecBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_mountainIncBtn", mntIncBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_mountainLabel", mntLbl.GetComponent<TextMeshProUGUI>());
+
+            SetField(matchCtrl, "_glimmerSlider", glmSliderObj.GetComponent<Slider>());
+            SetField(matchCtrl, "_glimmerDecBtn", glmDecBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_glimmerIncBtn", glmIncBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_glimmerLabel", glmLbl.GetComponent<TextMeshProUGUI>());
+
+            SetField(matchCtrl, "_balanceInfoText", balTxt.GetComponent<TextMeshProUGUI>());
+
+            SetField(matchCtrl, "_presetStandardBtn", pStdBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_presetLabyrinthBtn", pLabBtn.GetComponent<Button>());
+            SetField(matchCtrl, "_presetBlitzBtn", pBltBtn.GetComponent<Button>());
+
+            return (menuRoot, menuCg, settingsPanel);
         }
 
-        private static void BuildInGameHUDUI(Transform canvasRoot, GameObject managersObj)
+        private static Button BuildInGameHUDUI(Transform canvasRoot, GameObject managersObj)
         {
             GameObject hudRoot = CreateUIPanel("InGameHUDRoot", canvasRoot, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, Color.clear);
             var hudCg = hudRoot.AddComponent<CanvasGroup>();
@@ -475,7 +766,17 @@ namespace AncientTree.Editor
 
             // Settlement counter badge (cleanly positioned on right side of top bar)
             GameObject settCounterObj = CreateUIText("SettlementCounterText", topBar.transform, "Yerleşkeler: 0/5", 21, FontStyles.Normal, new Color(0.95f, 0.88f, 0.35f), TextAlignmentOptions.MidlineRight);
-            SetRect(settCounterObj.GetComponent<RectTransform>(), new Vector2(1f, 0.5f), new Vector2(-180, 0), new Vector2(240, 48));
+            SetRect(settCounterObj.GetComponent<RectTransform>(), new Vector2(1f, 0.5f), new Vector2(-200, 0), new Vector2(240, 48));
+
+            // In-game HUD Pause Button ("❚❚") on far right of top bar
+            var pauseBtnObj = CreateStyledButton("HUDPauseButton", topBar.transform, "❚❚", Vector2.zero, new Vector2(44, 44), new Color(0.22f, 0.28f, 0.38f));
+            RectTransform pauseRt = pauseBtnObj.GetComponent<RectTransform>();
+            pauseRt.anchorMin = new Vector2(1f, 0.5f);
+            pauseRt.anchorMax = new Vector2(1f, 0.5f);
+            pauseRt.anchoredPosition = new Vector2(-40, 0);
+            var pauseTxt = pauseBtnObj.GetComponentInChildren<TextMeshProUGUI>();
+            if (pauseTxt != null) { pauseTxt.fontSize = 18; }
+            Button hudPauseBtn = pauseBtnObj.GetComponent<Button>();
 
             // TOP RIGHT: DYNAMIC SCOREBOARD PANEL (Positioned safely below TopBar with no overlap)
             GameObject scorePanel = CreateUIPanel("ScoreboardPanel", hudRoot.transform, new Vector2(1f, 1f), new Vector2(1f, 1f), Vector2.zero, new Vector2(380, 240), new Color(0.11f, 0.13f, 0.17f, 0.94f));
@@ -524,8 +825,8 @@ namespace AncientTree.Editor
             var diceResTxt = CreateUIText("DiceResultText", bottomBar.transform, "-", 34, FontStyles.Bold, new Color(1f, 0.9f, 0.3f), TextAlignmentOptions.Center);
             SetRect(diceResTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-155, 12), new Vector2(70, 45));
 
-            var remHpTxt = CreateUIText("RemainingHpText", bottomBar.transform, "HP: 0", 18, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
-            SetRect(remHpTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-155, -22), new Vector2(90, 30));
+            var remHpTxt = CreateUIText("RemainingHpText", bottomBar.transform, "Adım: -", 18, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
+            SetRect(remHpTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-155, -22), new Vector2(100, 30));
 
             // Build Settlement Button
             var buildBtn = CreateStyledButton("BuildSettlementButton", bottomBar.transform, "Yerleşke Dik", new Vector2(10, 0), new Vector2(170, 65), new Color(0.18f, 0.65f, 0.35f), "BUILD_SETTLEMENT");
@@ -645,6 +946,74 @@ namespace AncientTree.Editor
             SetField(hudCtrl, "_victoryRestartButton", vicRestartBtn.GetComponent<Button>());
             SetField(hudCtrl, "_victoryReturnMenuButton", vicReturnBtn.GetComponent<Button>());
             SetField(hudCtrl, "_victoryConfettiVfx", ps);
+
+            return hudPauseBtn;
+        }
+
+        private static void BuildPauseMenuUI(Transform canvasRoot, GameObject managersObj, GameObject settingsPanel, Button hudPauseBtn)
+        {
+            // Fullscreen dark tint overlay (alpha ~0.70)
+            GameObject pauseOverlay = CreateUIPanel("PauseMenuRoot", canvasRoot, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0f, 0f, 0f, 0.70f), raycastTarget: true);
+            var overlayCg = pauseOverlay.AddComponent<CanvasGroup>();
+            overlayCg.alpha = 1f;
+
+            // Centered Pause Card
+            GameObject pauseCard = CreateUIPanel("PauseCard", pauseOverlay.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(460, 440), new Color(0.10f, 0.12f, 0.17f, 0.98f));
+            var cardOutline = pauseCard.AddComponent<Outline>();
+            cardOutline.effectColor = new Color(0.25f, 0.55f, 0.75f, 0.7f);
+            cardOutline.effectDistance = new Vector2(2f, -2f);
+
+            var accentBar = CreateUIPanel("AccentBar", pauseCard.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -6), new Vector2(420, 4), new Color(0.25f, 0.65f, 0.85f));
+
+            // Title: OYUN DURAKLATILDI
+            var titleObj = CreateUIText("PauseTitle", pauseCard.transform, "OYUN DURAKLATILDI", 24, FontStyles.Bold, new Color(1f, 0.85f, 0.25f), TextAlignmentOptions.Center);
+            SetRect(titleObj.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -38), new Vector2(420, 36));
+
+            // 4 Styled Buttons
+            var resumeBtn = CreateStyledButton("ResumeButton", pauseCard.transform, "Devam Et", new Vector2(0, 50), new Vector2(320, 50), new Color(0.18f, 0.58f, 0.35f), "BTN_RESUME");
+            var settingsBtn = CreateStyledButton("SettingsButton", pauseCard.transform, "Ayarlar", new Vector2(0, -15), new Vector2(320, 50), new Color(0.22f, 0.38f, 0.55f), "BTN_SETTINGS");
+            var mainMenuBtn = CreateStyledButton("MainMenuButton", pauseCard.transform, "Ana Menüye Dön", new Vector2(0, -80), new Vector2(320, 50), new Color(0.45f, 0.35f, 0.25f), "BTN_MAIN_MENU");
+            var quitBtn = CreateStyledButton("QuitButton", pauseCard.transform, "Oyundan Çık", new Vector2(0, -145), new Vector2(320, 50), new Color(0.55f, 0.22f, 0.22f), "BTN_QUIT");
+
+            // Confirmation Modal (overlay within pause menu)
+            GameObject confirmModal = CreateUIPanel("ConfirmModal", pauseOverlay.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0f, 0f, 0f, 0.80f), raycastTarget: true);
+            GameObject confirmCard = CreateUIPanel("ConfirmCard", confirmModal.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(500, 260), new Color(0.12f, 0.14f, 0.20f, 0.98f));
+            var confOutline = confirmCard.AddComponent<Outline>();
+            confOutline.effectColor = new Color(0.55f, 0.25f, 0.25f, 0.7f);
+            confOutline.effectDistance = new Vector2(2f, -2f);
+
+            var confAccent = CreateUIPanel("AccentBar", confirmCard.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -6), new Vector2(460, 4), new Color(0.85f, 0.35f, 0.35f));
+
+            var confTitle = CreateUIText("ConfirmTitle", confirmCard.transform, "EMİN MİSİNİZ?", 22, FontStyles.Bold, new Color(1f, 0.85f, 0.25f), TextAlignmentOptions.Center);
+            SetRect(confTitle.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -32), new Vector2(460, 32));
+
+            var confMsg = CreateUIText("ConfirmMessage", confirmCard.transform, "Mevcut oyun sonlandırılacak. Emin misiniz?", 15, FontStyles.Normal, Color.white, TextAlignmentOptions.Center);
+            SetRect(confMsg.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, 10), new Vector2(440, 70));
+            var confMsgTmp = confMsg.GetComponent<TextMeshProUGUI>();
+            confMsgTmp.textWrappingMode = TextWrappingModes.Normal;
+
+            var yesBtn = CreateStyledButton("ConfirmYesButton", confirmCard.transform, "Evet", new Vector2(-95, -75), new Vector2(150, 44), new Color(0.65f, 0.22f, 0.22f), "BTN_YES");
+            var noBtn = CreateStyledButton("ConfirmNoButton", confirmCard.transform, "Vazgeç", new Vector2(95, -75), new Vector2(150, 44), new Color(0.32f, 0.35f, 0.42f), "BTN_CANCEL");
+
+            confirmModal.SetActive(false);
+            pauseOverlay.SetActive(false);
+
+            // Wire to PauseManager
+            var pauseMgr = GetOrAdd<PauseManager>(managersObj);
+            SetField(pauseMgr, "_pauseOverlay", pauseOverlay);
+            SetField(pauseMgr, "_overlayCanvasGroup", overlayCg);
+            SetField(pauseMgr, "_pauseCard", pauseCard);
+            SetField(pauseMgr, "_resumeButton", resumeBtn.GetComponent<Button>());
+            SetField(pauseMgr, "_settingsButton", settingsBtn.GetComponent<Button>());
+            SetField(pauseMgr, "_mainMenuButton", mainMenuBtn.GetComponent<Button>());
+            SetField(pauseMgr, "_quitButton", quitBtn.GetComponent<Button>());
+            SetField(pauseMgr, "_hudPauseButton", hudPauseBtn);
+            SetField(pauseMgr, "_settingsPanel", settingsPanel);
+            SetField(pauseMgr, "_confirmModal", confirmModal);
+            SetField(pauseMgr, "_confirmTitleText", confTitle.GetComponent<TextMeshProUGUI>());
+            SetField(pauseMgr, "_confirmMessageText", confMsgTmp);
+            SetField(pauseMgr, "_confirmYesButton", yesBtn.GetComponent<Button>());
+            SetField(pauseMgr, "_confirmNoButton", noBtn.GetComponent<Button>());
         }
 
         // ================= UI CREATION HELPERS =================
@@ -729,32 +1098,50 @@ namespace AncientTree.Editor
             rt.anchoredPosition = anchoredPos;
             rt.sizeDelta = size;
 
-            // Background
-            GameObject bg = CreateUIPanel("Background", sliderObj.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0.2f, 0.2f, 0.25f));
+            var le = sliderObj.AddComponent<LayoutElement>();
+            le.preferredWidth = size.x;
+            le.preferredHeight = size.y;
+            le.minHeight = 26f;
+
+            // Background track - sleek 7px bar centered vertically
+            GameObject bg = CreateUIPanel("Background", sliderObj.transform, new Vector2(0f, 0.5f), new Vector2(1f, 0.5f), Vector2.zero, new Vector2(0, 7), new Color(0.18f, 0.20f, 0.26f), raycastTarget: true);
+            var bgOutline = bg.AddComponent<Outline>();
+            bgOutline.effectColor = new Color(0.28f, 0.35f, 0.45f, 0.6f);
+            bgOutline.effectDistance = new Vector2(1f, -1f);
 
             // Fill area
             GameObject fillArea = new GameObject("Fill Area");
             fillArea.transform.SetParent(sliderObj.transform, false);
             var fillAreaRt = fillArea.AddComponent<RectTransform>();
-            fillAreaRt.anchorMin = new Vector2(0f, 0.25f);
-            fillAreaRt.anchorMax = new Vector2(1f, 0.75f);
-            fillAreaRt.sizeDelta = Vector2.zero;
+            fillAreaRt.anchorMin = new Vector2(0f, 0.5f);
+            fillAreaRt.anchorMax = new Vector2(1f, 0.5f);
+            fillAreaRt.anchoredPosition = Vector2.zero;
+            fillAreaRt.sizeDelta = new Vector2(-14f, 7f);
 
-            GameObject fill = CreateUIPanel("Fill", fillArea.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0.2f, 0.7f, 1f));
+            GameObject fill = CreateUIPanel("Fill", fillArea.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0.2f, 0.7f, 1f), raycastTarget: false);
 
-            // Handle slide area
+            // Handle slide area - centered vertically, inset 7px on both sides so handle never overshoots track
             GameObject handleArea = new GameObject("Handle Slide Area");
             handleArea.transform.SetParent(sliderObj.transform, false);
             var handleAreaRt = handleArea.AddComponent<RectTransform>();
-            handleAreaRt.anchorMin = Vector2.zero;
-            handleAreaRt.anchorMax = Vector2.one;
-            handleAreaRt.sizeDelta = Vector2.zero;
+            handleAreaRt.anchorMin = new Vector2(0f, 0.5f);
+            handleAreaRt.anchorMax = new Vector2(1f, 0.5f);
+            handleAreaRt.anchoredPosition = Vector2.zero;
+            handleAreaRt.sizeDelta = new Vector2(-14f, 14f);
 
-            GameObject handle = CreateUIPanel("Handle", handleArea.transform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), Vector2.zero, new Vector2(20, 28), Color.white);
+            // Handle - strictly fixed 14x14px middle-center thumb
+            GameObject handle = CreateUIPanel("Handle", handleArea.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(14f, 14f), new Color(0.92f, 0.95f, 1f), raycastTarget: true);
+            var handleRt = handle.GetComponent<RectTransform>();
+            handleRt.pivot = new Vector2(0.5f, 0.5f);
+            handleRt.sizeDelta = new Vector2(14f, 14f);
+
+            var handleOutline = handle.AddComponent<Outline>();
+            handleOutline.effectColor = new Color(0.2f, 0.55f, 0.85f, 0.85f);
+            handleOutline.effectDistance = new Vector2(1f, -1f);
 
             var slider = sliderObj.AddComponent<Slider>();
             slider.fillRect = fill.GetComponent<RectTransform>();
-            slider.handleRect = handle.GetComponent<RectTransform>();
+            slider.handleRect = handleRt;
             slider.targetGraphic = handle.GetComponent<Image>();
             slider.direction = Slider.Direction.LeftToRight;
             slider.minValue = 0f;
@@ -764,7 +1151,7 @@ namespace AncientTree.Editor
             return sliderObj;
         }
 
-        private static GameObject CreateToggle(string name, Transform parent, string label, Vector2 anchor, Vector2 anchoredPos)
+        private static GameObject CreateToggle(string name, Transform parent, string label, Vector2 anchor, Vector2 anchoredPos, string locKey = null, float width = 110f, float height = 32f)
         {
             GameObject toggleObj = new GameObject(name);
             toggleObj.transform.SetParent(parent, false);
@@ -772,23 +1159,147 @@ namespace AncientTree.Editor
             rt.anchorMin = anchor;
             rt.anchorMax = anchor;
             rt.anchoredPosition = anchoredPos;
-            rt.sizeDelta = new Vector2(90, 30);
+            rt.sizeDelta = new Vector2(width, height);
+
+            var le = toggleObj.AddComponent<LayoutElement>();
+            le.preferredWidth = width;
+            le.preferredHeight = height;
+
+            // Full clickable area for the toggle
+            var hitArea = toggleObj.AddComponent<Image>();
+            hitArea.color = Color.clear;
+            hitArea.raycastTarget = true;
+
+            bool hasLabel = !string.IsNullOrEmpty(label);
 
             // Checkbox box
-            GameObject box = CreateUIPanel("Background", toggleObj.transform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(12, 0), new Vector2(22, 22), new Color(0.25f, 0.25f, 0.3f));
-            GameObject checkmark = CreateUIPanel("Checkmark", box.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(14, 14), new Color(0.2f, 0.8f, 1f));
+            Vector2 boxAnchor = hasLabel ? new Vector2(0f, 0.5f) : new Vector2(0.5f, 0.5f);
+            Vector2 boxPos = hasLabel ? new Vector2(14f, 0f) : Vector2.zero;
+            GameObject box = CreateUIPanel("Background", toggleObj.transform, boxAnchor, boxAnchor, boxPos, new Vector2(24, 24), new Color(0.22f, 0.25f, 0.32f), raycastTarget: true);
+            var boxOutline = box.AddComponent<Outline>();
+            boxOutline.effectColor = new Color(0.35f, 0.55f, 0.75f, 0.7f);
+            boxOutline.effectDistance = new Vector2(1f, -1f);
 
-            // Label
-            GameObject labelObj = CreateUIText("Label", toggleObj.transform, label, 16, FontStyles.Normal, Color.white, TextAlignmentOptions.MidlineLeft);
-            SetRect(labelObj.GetComponent<RectTransform>(), new Vector2(0f, 0.5f), new Vector2(55, 0), new Vector2(60, 24));
-            labelObj.AddComponent<LocalizedText>().LocalizationKey = "MUTE";
+            // Subtle speaker indicator icon when unmuted (for mute toggle)
+            if (!hasLabel)
+            {
+                var iconObj = CreateUIText("MuteIcon", box.transform, "M", 12, FontStyles.Bold, new Color(0.6f, 0.7f, 0.85f, 0.7f), TextAlignmentOptions.Center);
+                var iconRt = iconObj.GetComponent<RectTransform>();
+                iconRt.anchorMin = Vector2.zero;
+                iconRt.anchorMax = Vector2.one;
+                iconRt.sizeDelta = Vector2.zero;
+            }
+
+            // Checkmark / active indicator
+            Color checkColor = hasLabel ? new Color(0.2f, 0.8f, 1f) : new Color(0.95f, 0.32f, 0.32f);
+            GameObject checkmark = CreateUIPanel("Checkmark", box.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(16, 16), checkColor, raycastTarget: false);
+
+            if (hasLabel)
+            {
+                // Label
+                GameObject labelObj = CreateUIText("Label", toggleObj.transform, label, 15, FontStyles.Normal, Color.white, TextAlignmentOptions.MidlineLeft, raycastTarget: false);
+                SetRect(labelObj.GetComponent<RectTransform>(), new Vector2(0f, 0.5f), new Vector2(50, 0), new Vector2(width - 46, 24));
+                var tmp = labelObj.GetComponent<TextMeshProUGUI>();
+                tmp.overflowMode = TextOverflowModes.Ellipsis;
+                if (!string.IsNullOrEmpty(locKey))
+                    labelObj.AddComponent<LocalizedText>().LocalizationKey = locKey;
+            }
 
             var toggle = toggleObj.AddComponent<Toggle>();
             toggle.graphic = checkmark.GetComponent<Image>();
-            toggle.targetGraphic = box.GetComponent<Image>();
+            toggle.targetGraphic = hitArea;
             toggle.isOn = false;
 
             return toggleObj;
+        }
+
+        private static GameObject CreateTMPDropdown(string name, Transform parent, Vector2 anchor, Vector2 anchoredPos, Vector2 size)
+        {
+            var res = new TMPro.TMP_DefaultControls.Resources();
+            GameObject dropdownObj = TMPro.TMP_DefaultControls.CreateDropdown(res);
+            dropdownObj.name = name;
+            dropdownObj.transform.SetParent(parent, false);
+
+            var rt = dropdownObj.GetComponent<RectTransform>();
+            rt.anchorMin = anchor;
+            rt.anchorMax = anchor;
+            rt.anchoredPosition = anchoredPos;
+            rt.sizeDelta = size;
+
+            var le = dropdownObj.AddComponent<LayoutElement>();
+            le.preferredWidth = size.x;
+            le.preferredHeight = size.y;
+            le.minHeight = 28f;
+
+            // Closed state button: crisp modern slate-white with dark readable text
+            var bgImg = dropdownObj.GetComponent<Image>();
+            if (bgImg != null)
+            {
+                bgImg.color = new Color(0.93f, 0.95f, 0.98f, 1f);
+            }
+
+            var outline = dropdownObj.AddComponent<Outline>();
+            outline.effectColor = new Color(0.35f, 0.55f, 0.85f, 0.7f);
+            outline.effectDistance = new Vector2(1f, -1f);
+
+            var dropdown = dropdownObj.GetComponent<TMPro.TMP_Dropdown>();
+            if (dropdown != null && dropdown.captionText != null)
+            {
+                dropdown.captionText.fontSize = 15;
+                dropdown.captionText.color = new Color(0.10f, 0.12f, 0.18f, 1f); // Tok koyu antrasit/lacivert (#1A1E2E)
+                dropdown.captionText.alignment = TextAlignmentOptions.MidlineLeft;
+                dropdown.captionText.overflowMode = TextOverflowModes.Ellipsis;
+            }
+
+            // Arrow icon color
+            var arrow = dropdownObj.transform.Find("Arrow")?.GetComponent<Image>();
+            if (arrow != null)
+            {
+                arrow.color = new Color(0.15f, 0.25f, 0.45f, 1f);
+            }
+
+            // Open list template styling
+            if (dropdown != null && dropdown.template != null)
+            {
+                dropdown.template.sizeDelta = new Vector2(0, 180);
+                var templateBg = dropdown.template.GetComponent<Image>();
+                if (templateBg != null)
+                    templateBg.color = new Color(0.96f, 0.97f, 1f, 1f); // Crisp clean light panel
+
+                var templateOutline = dropdown.template.gameObject.AddComponent<Outline>();
+                templateOutline.effectColor = new Color(0.35f, 0.55f, 0.85f, 0.8f);
+                templateOutline.effectDistance = new Vector2(1.5f, -1.5f);
+
+                // Item Toggle colors (Normal, Highlighted/Hover, Selected)
+                var itemToggle = dropdown.template.GetComponentInChildren<Toggle>(true);
+                if (itemToggle != null)
+                {
+                    var cb = itemToggle.colors;
+                    cb.normalColor = new Color(0.96f, 0.97f, 1f, 1f);
+                    cb.highlightedColor = new Color(0.85f, 0.90f, 1f, 1f); // Soft pastel blue hover
+                    cb.pressedColor = new Color(0.75f, 0.85f, 0.98f, 1f);
+                    cb.selectedColor = new Color(0.82f, 0.88f, 0.98f, 1f);
+                    itemToggle.colors = cb;
+                }
+
+                // Item Text: Tok okunaklı lacivert/antrasit (#1A1E2E)
+                if (dropdown.itemText != null)
+                {
+                    dropdown.itemText.fontSize = 14;
+                    dropdown.itemText.color = new Color(0.10f, 0.12f, 0.18f, 1f);
+                    dropdown.itemText.alignment = TextAlignmentOptions.MidlineLeft;
+                    dropdown.itemText.overflowMode = TextOverflowModes.Ellipsis;
+                }
+
+                // Checkmark icon
+                var checkmarkImg = dropdown.template.transform.Find("Viewport/Content/Item/Item Checkmark")?.GetComponent<Image>();
+                if (checkmarkImg != null)
+                {
+                    checkmarkImg.color = new Color(0.15f, 0.45f, 0.9f, 1f);
+                }
+            }
+
+            return dropdownObj;
         }
 
         private static void SetRect(RectTransform rt, Vector2 anchor, Vector2 pos, Vector2 size)
@@ -853,6 +1364,86 @@ namespace AncientTree.Editor
                 target.GetType().GetField(fieldName, flags)?.SetValue(target, values);
             }
             EditorUtility.SetDirty(target);
+        }
+
+        private static void BuildSplashScreenUI(Transform canvasRoot, GameObject managersObj, GameObject menuRoot, CanvasGroup menuCg)
+        {
+            // 1. Ensure logo is imported as Sprite with transparency
+            string logoPath = "Assets/sprites/fipulogo.png";
+            if (!System.IO.File.Exists(logoPath)) logoPath = "Assets/Sprites/fipulogo.png";
+            var importer = AssetImporter.GetAtPath(logoPath) as TextureImporter;
+            if (importer != null && (importer.textureType != TextureImporterType.Sprite || importer.spriteImportMode != SpriteImportMode.Single))
+            {
+                importer.textureType = TextureImporterType.Sprite;
+                importer.spriteImportMode = SpriteImportMode.Single;
+                importer.alphaIsTransparency = true;
+                importer.mipmapEnabled = false;
+                importer.SaveAndReimport();
+            }
+
+            Sprite logoSprite = AssetDatabase.LoadAssetAtPath<Sprite>(logoPath);
+            if (logoSprite == null)
+            {
+                foreach (var a in AssetDatabase.LoadAllAssetsAtPath(logoPath))
+                {
+                    if (a is Sprite s) { logoSprite = s; break; }
+                }
+            }
+
+            // 2. Dedicated Splash Canvas with sortingOrder 999 to guarantee topmost rendering above all UI
+            GameObject splashRoot = new GameObject("Splash_Canvas");
+            splashRoot.transform.SetParent(canvasRoot, false);
+            var splashRt = splashRoot.AddComponent<RectTransform>();
+            splashRt.anchorMin = Vector2.zero;
+            splashRt.anchorMax = Vector2.one;
+            splashRt.offsetMin = Vector2.zero;
+            splashRt.offsetMax = Vector2.zero;
+
+            var splashCanvas = splashRoot.AddComponent<Canvas>();
+            splashCanvas.overrideSorting = true;
+            splashCanvas.sortingOrder = 999;
+            splashRoot.AddComponent<GraphicRaycaster>();
+
+            var cg = splashRoot.AddComponent<CanvasGroup>();
+            cg.alpha = 1f;
+            cg.interactable = true;
+            cg.blocksRaycasts = true;
+
+            // 2b. Background_Panel (Image - Koyu Gri #2D2D2D, Stretch 0 to 1)
+            GameObject bgPanel = CreateUIPanel("Background_Panel", splashRoot.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0.176f, 0.176f, 0.176f, 1f), raycastTarget: true);
+
+            // 3. Logo_Image (child of Background_Panel, centered, 450x250, preserveAspect = true, color = Color.white)
+            GameObject logoObj = new GameObject("Logo_Image");
+            logoObj.transform.SetParent(bgPanel.transform, false);
+            var logoRt = logoObj.AddComponent<RectTransform>();
+            logoRt.anchorMin = new Vector2(0.5f, 0.5f);
+            logoRt.anchorMax = new Vector2(0.5f, 0.5f);
+            logoRt.pivot = new Vector2(0.5f, 0.5f);
+            logoRt.anchoredPosition = Vector2.zero;
+            logoRt.sizeDelta = new Vector2(450, 250);
+            logoObj.transform.localScale = Vector3.one * 0.75f;
+
+            var logoCg = logoObj.AddComponent<CanvasGroup>();
+            logoCg.alpha = 0f;
+
+            var logoImg = logoObj.AddComponent<Image>();
+            logoImg.sprite = logoSprite;
+            logoImg.preserveAspect = true;
+            logoImg.raycastTarget = false;
+            logoImg.color = Color.white;
+
+            // 4. Wire SplashScreenController (strictly unskippable, scale + fade animation)
+            var splashCtrl = GetOrAdd<SplashScreenController>(managersObj);
+            SetField(splashCtrl, "_splashRoot", splashRoot);
+            SetField(splashCtrl, "_splashCanvasGroup", cg);
+            SetField(splashCtrl, "_logoImage", logoImg);
+            SetField(splashCtrl, "_logoCanvasGroup", logoCg);
+            SetField(splashCtrl, "_mainMenuRoot", menuRoot);
+            SetField(splashCtrl, "_mainMenuCanvasGroup", menuCg);
+            SetField(splashCtrl, "_fadeInDuration", 0.9f);
+            SetField(splashCtrl, "_holdDuration", 1.0f);
+            SetField(splashCtrl, "_fadeOutDuration", 0.5f);
+            SetField(splashCtrl, "_skipIfNativeSplashActive", PlayerPrefs.GetInt("Fogfield_NativeSplashHasLogo", 0) == 1);
         }
     }
 }

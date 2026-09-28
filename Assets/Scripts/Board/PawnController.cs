@@ -157,7 +157,8 @@ namespace AncientTree.Board
             var col4 = crown.GetComponent<Collider>();
             if (col4 != null) Destroy(col4);
 
-            var mat = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+            var baseMat = Resources.Load<Material>("Materials/PawnMaterial");
+            Material mat = baseMat != null ? new Material(baseMat) : new Material(MapGenerator.GetSafeShader(unlit: false));
             mat.color = color;
             baseCylinder.GetComponent<MeshRenderer>().material = mat;
             body.GetComponent<MeshRenderer>().material = mat;

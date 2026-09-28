@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
+using AncientTree.Core;
 
 namespace AncientTree.Board
 {
@@ -60,7 +61,32 @@ namespace AncientTree.Board
                 case TileType.RadiantRuins: prefab = _karoRadiantRuinsPrefab; break;
             }
 
+            // Fallback 1: Load from Resources/Tiles/ (guaranteed in Standalone and Mobile builds)
+            if (prefab == null)
+            {
+                string[] candidates = null;
+                switch (type)
+                {
+                    case TileType.AncientTree:  candidates = new[] { "Tiles/agac" }; break;
+                    case TileType.Mountain:     candidates = new[] { "Tiles/dag" }; break;
+                    case TileType.BarrenLand:   candidates = new[] { "Tiles/corak" }; break;
+                    case TileType.FertileLand:  candidates = new[] { "Tiles/verimli" }; break;
+                    case TileType.LushValley:   candidates = new[] { "Tiles/vadi" }; break;
+                    case TileType.AncientOre:   candidates = new[] { "Tiles/kadim cevher", "Tiles/kadimcevher" }; break;
+                    case TileType.RadiantRuins: candidates = new[] { "Tiles/isiltiliharabe", "Tiles/ısıltılıharabe" }; break;
+                }
+                if (candidates != null)
+                {
+                    foreach (var path in candidates)
+                    {
+                        prefab = Resources.Load<GameObject>(path);
+                        if (prefab != null) break;
+                    }
+                }
+            }
+
 #if UNITY_EDITOR
+            // Fallback 2: AssetDatabase GUID lookup in Editor
             if (prefab == null)
             {
                 string guid = null;
@@ -89,30 +115,82 @@ namespace AncientTree.Board
 
         /// <summary>
         /// Generates the 11x11 procedural board strictly adhering to all game constraints.
+        /// Wrapped in try-catch with emergency fallback so the board is NEVER left empty in builds.
         /// </summary>
         public void GenerateMap(int? customSeed = null)
         {
             int seed = customSeed ?? UnityEngine.Random.Range(10000, 999999);
-            System.Random rng = new System.Random(seed);
+            try
+            {
+                System.Random rng = new System.Random(seed);
 
-            // Ensure container exists
+                // Ensure container exists
+                if (_boardContainer == null)
+                {
+                    var existing = GameObject.Find("Board_Container") ?? GameObject.Find("BoardTiles");
+                    if (existing != null) _boardContainer = existing.transform;
+                    else
+                    {
+                        var newContainer = new GameObject("Board_Container");
+                        _boardContainer = newContainer.transform;
+                    }
+                }
+
+                // Clear previous tiles if any
+                ClearExistingTiles();
+
+                // Safe config resolution (never null)
+                MatchConfig cfg = MatchConfig.Current ?? MatchConfig.Instance ?? MatchConfig.Preset_Standard();
+                if (cfg == null || cfg.MountainCount <= 0) cfg = MatchConfig.Preset_Standard();
+
+                TileType[,] layout = GenerateProceduralLayout(rng, cfg);
+
+                // Instantiate visual tiles strictly with mathematical spacing
+                float spacing = TileSpacing;
+                Vector3 centerOffset = new Vector3((GridSize - 1) * spacing * 0.5f, 0f, (GridSize - 1) * spacing * 0.5f);
+
+                for (int x = 0; x < GridSize; x++)
+                {
+                    for (int y = 0; y < GridSize; y++)
+                    {
+                        Vector3 worldPos = new Vector3(x * spacing, 0f, y * spacing) - centerOffset;
+                        GameObject tileObj = CreateDefaultTileGameObject(worldPos, layout[x, y]);
+
+                        tileObj.name = $"Tile_{x + 1}_{y + 1}"; // 1-indexed name: (6,6) is center
+                        var controller = tileObj.GetComponent<TileController>();
+                        if (controller == null)
+                        {
+                            controller = tileObj.AddComponent<TileController>();
+                        }
+
+                        bool isCenter = (x == CenterCoords.x && y == CenterCoords.y);
+                        controller.Initialize(new Vector2Int(x, y), layout[x, y], startRevealed: isCenter);
+                        if (isCenter)
+                        {
+                            AttachAncientTreeModel(tileObj);
+                        }
+                        _tiles[x, y] = controller;
+                    }
+                }
+
+                Debug.Log($"<color=green><b>[MapGenerator]</b> 11x11 harita başarıyla üretildi! (Toplam: {TotalTiles} karo, Tohum: {seed})</color>");
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"<color=red><b>[MapGenerator KRİTİK HATA]</b> Harita üretimi başarısız oldu: {ex.Message}\n{ex.StackTrace}</b></color>");
+                GenerateEmergencyFallbackMap();
+            }
+        }
+
+        private void GenerateEmergencyFallbackMap()
+        {
+            Debug.LogWarning("[MapGenerator] Acil durum yedek haritası üretiliyor (Emergency Fallback)...");
             if (_boardContainer == null)
             {
-                var existing = GameObject.Find("Board_Container") ?? GameObject.Find("BoardTiles");
-                if (existing != null) _boardContainer = existing.transform;
-                else
-                {
-                    var newContainer = new GameObject("Board_Container");
-                    _boardContainer = newContainer.transform;
-                }
+                var newContainer = new GameObject("Board_Container");
+                _boardContainer = newContainer.transform;
             }
 
-            // Clear previous tiles if any
-            ClearExistingTiles();
-
-            TileType[,] layout = GenerateProceduralLayout(rng);
-
-            // Instantiate visual tiles strictly with mathematical spacing
             float spacing = TileSpacing;
             Vector3 centerOffset = new Vector3((GridSize - 1) * spacing * 0.5f, 0f, (GridSize - 1) * spacing * 0.5f);
 
@@ -120,18 +198,16 @@ namespace AncientTree.Board
             {
                 for (int y = 0; y < GridSize; y++)
                 {
+                    if (_tiles[x, y] != null) continue;
+
                     Vector3 worldPos = new Vector3(x * spacing, 0f, y * spacing) - centerOffset;
-                    GameObject tileObj = CreateDefaultTileGameObject(worldPos, layout[x, y]);
+                    TileType type = (x == CenterCoords.x && y == CenterCoords.y) ? TileType.AncientTree : TileType.BarrenLand;
+                    GameObject tileObj = CreateDefaultTileGameObject(worldPos, type);
+                    tileObj.name = $"Tile_{x + 1}_{y + 1}";
 
-                    tileObj.name = $"Tile_{x + 1}_{y + 1}"; // 1-indexed name: (6,6) is center
-                    var controller = tileObj.GetComponent<TileController>();
-                    if (controller == null)
-                    {
-                        controller = tileObj.AddComponent<TileController>();
-                    }
-
+                    var controller = tileObj.GetComponent<TileController>() ?? tileObj.AddComponent<TileController>();
                     bool isCenter = (x == CenterCoords.x && y == CenterCoords.y);
-                    controller.Initialize(new Vector2Int(x, y), layout[x, y], startRevealed: isCenter);
+                    controller.Initialize(new Vector2Int(x, y), type, startRevealed: isCenter);
                     if (isCenter)
                     {
                         AttachAncientTreeModel(tileObj);
@@ -144,6 +220,10 @@ namespace AncientTree.Board
         private void AttachAncientTreeModel(GameObject tileObj)
         {
             GameObject modelPrefab = _ancientTreeModelPrefab;
+            if (modelPrefab == null)
+            {
+                modelPrefab = Resources.Load<GameObject>("Models/ubisoft");
+            }
 #if UNITY_EDITOR
             if (modelPrefab == null)
             {
@@ -201,8 +281,19 @@ namespace AncientTree.Board
         /// <summary>
         /// Procedural generation algorithm enforcing all three core constraints.
         /// </summary>
-        public static TileType[,] GenerateProceduralLayout(System.Random rng)
+        /// <param name="rng">Seeded random instance.</param>
+        /// <param name="cfg">
+        /// Optional match config; falls back to <see cref="MatchConfig.Current"/> when null.
+        /// </param>
+        public static TileType[,] GenerateProceduralLayout(System.Random rng, MatchConfig cfg = null)
         {
+            // Resolve config: use provided cfg or fall back to singleton with safe defaults
+            cfg = cfg ?? MatchConfig.Current ?? MatchConfig.Instance ?? MatchConfig.Preset_Standard();
+            if (cfg == null || cfg.MountainCount <= 0) cfg = MatchConfig.Preset_Standard();
+
+            int requiredMountains = cfg.MountainCount;
+            int glimmerCount      = cfg.GlimmerCount;
+
             const int maxRetries = 100;
 
             for (int attempt = 0; attempt < maxRetries; attempt++)
@@ -226,10 +317,10 @@ namespace AncientTree.Board
                 }
 
                 // 2. Parıltı Dağılım Kuralı:
-                // 7 Glimmer karosu (5 Ancient Ore [4P] + 2 Radiant Ruins [5P]):
-                // - Manhattan mesafesi merkeze KESİN OLARAK >= 5 (1d4 zarda ilk turda 4P/5P rush engelleme)
-                // - 4 ana kadrana (NW, NE, SW, SE) en az 1'er adet
-                // - Kalan 3 tanesi rastgele dış halkalara serpilmeli
+                // glimmerCount Glimmer karosu:
+                // - Manhattan mesafesi merkeze KESİN OLARAK >= 5
+                // - Eğer glimmerCount >= 4: 4 ana kadrana (NW, NE, SW, SE) en az 1'er adet, kalan (glimmerCount-4) rastgele
+                // - Eğer glimmerCount < 4: glimmerCount kadrondan eşit dağıtımlı seçim (en fazla 1/kadran)
                 List<Vector2Int> nwCandidates = new List<Vector2Int>();
                 List<Vector2Int> neCandidates = new List<Vector2Int>();
                 List<Vector2Int> swCandidates = new List<Vector2Int>();
@@ -256,53 +347,86 @@ namespace AncientTree.Board
                 }
 
                 List<Vector2Int> selectedGlimmerCoords = new List<Vector2Int>();
-                Vector2Int pickNW = nwCandidates[rng.Next(nwCandidates.Count)];
-                selectedGlimmerCoords.Add(pickNW);
-                occupied[pickNW.x, pickNW.y] = true;
 
-                Vector2Int pickNE = neCandidates[rng.Next(neCandidates.Count)];
-                selectedGlimmerCoords.Add(pickNE);
-                occupied[pickNE.x, pickNE.y] = true;
-
-                Vector2Int pickSW = swCandidates[rng.Next(swCandidates.Count)];
-                selectedGlimmerCoords.Add(pickSW);
-                occupied[pickSW.x, pickSW.y] = true;
-
-                Vector2Int pickSE = seCandidates[rng.Next(seCandidates.Count)];
-                selectedGlimmerCoords.Add(pickSE);
-                occupied[pickSE.x, pickSE.y] = true;
-
-                // Pick remaining 3 from remaining candidates
-                List<Vector2Int> remainingCandidates = new List<Vector2Int>();
-                foreach (var c in allGlimmerCandidates)
+                if (glimmerCount >= 4)
                 {
-                    if (!occupied[c.x, c.y]) remainingCandidates.Add(c);
+                    // --- Guarantee one glimmer per cardinal quadrant ---
+                    Vector2Int pickNW = nwCandidates[rng.Next(nwCandidates.Count)];
+                    selectedGlimmerCoords.Add(pickNW);
+                    occupied[pickNW.x, pickNW.y] = true;
+
+                    Vector2Int pickNE = neCandidates[rng.Next(neCandidates.Count)];
+                    selectedGlimmerCoords.Add(pickNE);
+                    occupied[pickNE.x, pickNE.y] = true;
+
+                    Vector2Int pickSW = swCandidates[rng.Next(swCandidates.Count)];
+                    selectedGlimmerCoords.Add(pickSW);
+                    occupied[pickSW.x, pickSW.y] = true;
+
+                    Vector2Int pickSE = seCandidates[rng.Next(seCandidates.Count)];
+                    selectedGlimmerCoords.Add(pickSE);
+                    occupied[pickSE.x, pickSE.y] = true;
+
+                    // Pick remaining (glimmerCount - 4) from unoccupied candidates
+                    int extraGlimmer = glimmerCount - 4;
+                    if (extraGlimmer > 0)
+                    {
+                        List<Vector2Int> remainingCandidates = new List<Vector2Int>();
+                        foreach (var c in allGlimmerCandidates)
+                        {
+                            if (!occupied[c.x, c.y]) remainingCandidates.Add(c);
+                        }
+                        Shuffle(remainingCandidates, rng);
+
+                        for (int i = 0; i < extraGlimmer && i < remainingCandidates.Count; i++)
+                        {
+                            Vector2Int pick = remainingCandidates[i];
+                            selectedGlimmerCoords.Add(pick);
+                            occupied[pick.x, pick.y] = true;
+                        }
+                    }
                 }
-                Shuffle(remainingCandidates, rng);
-
-                for (int i = 0; i < 3; i++)
+                else
                 {
-                    Vector2Int pick = remainingCandidates[i];
-                    selectedGlimmerCoords.Add(pick);
-                    occupied[pick.x, pick.y] = true;
+                    // glimmerCount < 4: spread evenly across quadrants (at most 1 per quadrant)
+                    List<List<Vector2Int>> quadrants = new List<List<Vector2Int>>
+                    {
+                        nwCandidates, neCandidates, swCandidates, seCandidates
+                    };
+                    Shuffle(quadrants, rng);
+
+                    for (int i = 0; i < glimmerCount; i++)
+                    {
+                        var quad = quadrants[i % quadrants.Count];
+                        if (quad.Count == 0) continue;
+                        Vector2Int pick = quad[rng.Next(quad.Count)];
+                        if (!occupied[pick.x, pick.y])
+                        {
+                            selectedGlimmerCoords.Add(pick);
+                            occupied[pick.x, pick.y] = true;
+                        }
+                    }
                 }
 
-                // Assign the 7 glimmer types: 2 Radiant Ruins (5P) and 5 Ancient Ore (4P)
-                List<TileType> glimmerPool = new List<TileType>
-                {
-                    TileType.RadiantRuins, TileType.RadiantRuins,
-                    TileType.AncientOre, TileType.AncientOre, TileType.AncientOre, TileType.AncientOre, TileType.AncientOre
-                };
+                // Assign glimmer types: 2 Radiant Ruins (5P) + rest Ancient Ore (4P)
+                // If glimmerCount <= 2, all slots become RadiantRuins
+                List<TileType> glimmerPool = new List<TileType>();
+                int radiantCount = Mathf.Min(2, selectedGlimmerCoords.Count);
+                for (int i = 0; i < radiantCount; i++)
+                    glimmerPool.Add(TileType.RadiantRuins);
+                for (int i = radiantCount; i < selectedGlimmerCoords.Count; i++)
+                    glimmerPool.Add(TileType.AncientOre);
+
                 Shuffle(glimmerPool, rng);
 
-                for (int i = 0; i < 7; i++)
+                for (int i = 0; i < selectedGlimmerCoords.Count; i++)
                 {
                     Vector2Int pt = selectedGlimmerCoords[i];
                     layout[pt.x, pt.y] = glimmerPool[i];
                 }
 
                 // 3. Dağ Dağılımı ve 2x2 Kısıtı:
-                // 24 Geçilmez Dağ (0 P)
+                // requiredMountains Geçilmez Dağ (0 P)
                 // - Ağaç çevresindeki 8 komşu kareye ASLA gelemez
                 // - Hiçbir 2x2'lik alan tamamen 4 dağdan oluşamaz
                 List<Vector2Int> mountainCandidates = new List<Vector2Int>();
@@ -318,7 +442,6 @@ namespace AncientTree.Board
                 Shuffle(mountainCandidates, rng);
 
                 int mountainsPlaced = 0;
-                const int requiredMountains = 24;
 
                 foreach (var coord in mountainCandidates)
                 {
@@ -337,12 +460,12 @@ namespace AncientTree.Board
                     continue;
                 }
 
-                // 4. Kalan 89 sisli karo havuz dağılımı:
-                // 45 Çorak Toprak (1 P), 32 Verimli Toprak (2 P), 12 Bereketli Vadi (3 P)
+                // 4. Kalan sisli karo havuz dağılımı (cfg'den alınan oranlar):
+                // BarrenLand (1P), FertileLand (2P), LushValley (3P)
                 List<TileType> regularPool = new List<TileType>();
-                for (int i = 0; i < 45; i++) regularPool.Add(TileType.BarrenLand);
-                for (int i = 0; i < 32; i++) regularPool.Add(TileType.FertileLand);
-                for (int i = 0; i < 12; i++) regularPool.Add(TileType.LushValley);
+                for (int i = 0; i < cfg.BarrenCount;  i++) regularPool.Add(TileType.BarrenLand);
+                for (int i = 0; i < cfg.FertileCount; i++) regularPool.Add(TileType.FertileLand);
+                for (int i = 0; i < cfg.LushCount;    i++) regularPool.Add(TileType.LushValley);
 
                 Shuffle(regularPool, rng);
                 int poolIndex = 0;
@@ -351,7 +474,7 @@ namespace AncientTree.Board
                 {
                     for (int y = 0; y < GridSize; y++)
                     {
-                        if (!occupied[x, y])
+                        if (!occupied[x, y] && poolIndex < regularPool.Count)
                         {
                             layout[x, y] = regularPool[poolIndex++];
                             occupied[x, y] = true;
@@ -364,6 +487,7 @@ namespace AncientTree.Board
 
             throw new InvalidOperationException("Failed to generate valid board layout within max retries.");
         }
+
 
         private static bool Creates2x2MountainCluster(TileType[,] layout, int nx, int ny)
         {
@@ -467,7 +591,7 @@ namespace AncientTree.Board
                 var fogMat = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
                 fogMat.color = new Color(0.24f, 0.26f, 0.32f);
                 fogRend = fogCover.GetComponent<MeshRenderer>();
-                fogRend.material = fogMat;
+                fogRend.material = GetSharedFogMaterial();
 
                 topRend = topFace.GetComponent<MeshRenderer>();
             }
@@ -553,19 +677,62 @@ namespace AncientTree.Board
         private static Material _sharedGlimmerMaterial;
         private static Material _sharedHighlightMaterial;
         private static Material _sharedTerritoryMaterial;
+        private static Material _sharedFogMaterial;
+
+        public static Shader GetSafeShader(bool unlit = false)
+        {
+            if (unlit)
+            {
+                return Shader.Find("Universal Render Pipeline/Unlit")
+                    ?? Shader.Find("Unlit/Color")
+                    ?? Shader.Find("Sprites/Default")
+                    ?? Shader.Find("UI/Default")
+                    ?? Shader.Find("Mobile/Diffuse")
+                    ?? Shader.Find("Standard")
+                    ?? Shader.Find("Hidden/InternalErrorShader");
+            }
+            else
+            {
+                return Shader.Find("Universal Render Pipeline/Lit")
+                    ?? Shader.Find("Standard")
+                    ?? Shader.Find("Mobile/Diffuse")
+                    ?? Shader.Find("Universal Render Pipeline/Simple Lit")
+                    ?? Shader.Find("Sprites/Default")
+                    ?? Shader.Find("Hidden/InternalErrorShader");
+            }
+        }
+
+        public static Material GetSharedFogMaterial()
+        {
+            if (_sharedFogMaterial == null)
+            {
+                _sharedFogMaterial = Resources.Load<Material>("Materials/FogMaterial");
+                if (_sharedFogMaterial == null)
+                {
+                    var shader = GetSafeShader(unlit: false);
+                    _sharedFogMaterial = new Material(shader);
+                    _sharedFogMaterial.color = new Color(0.24f, 0.26f, 0.32f);
+                }
+            }
+            return _sharedFogMaterial;
+        }
 
         public static Material GetSharedGlimmerMaterial()
         {
             if (_sharedGlimmerMaterial == null)
             {
-                var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color");
-                _sharedGlimmerMaterial = new Material(shader);
-                _sharedGlimmerMaterial.color = new Color(1f * 3.0f, 0.85f * 3.0f, 0.12f * 3.0f, 0.75f);
-                _sharedGlimmerMaterial.SetFloat("_Surface", 1);
-                _sharedGlimmerMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                _sharedGlimmerMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                _sharedGlimmerMaterial.SetInt("_ZWrite", 0);
-                _sharedGlimmerMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                _sharedGlimmerMaterial = Resources.Load<Material>("Materials/GlimmerMaterial");
+                if (_sharedGlimmerMaterial == null)
+                {
+                    var shader = GetSafeShader(unlit: true);
+                    _sharedGlimmerMaterial = new Material(shader);
+                    _sharedGlimmerMaterial.color = new Color(1f * 3.0f, 0.85f * 3.0f, 0.12f * 3.0f, 0.75f);
+                    _sharedGlimmerMaterial.SetFloat("_Surface", 1);
+                    _sharedGlimmerMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                    _sharedGlimmerMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                    _sharedGlimmerMaterial.SetInt("_ZWrite", 0);
+                    _sharedGlimmerMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                }
             }
             return _sharedGlimmerMaterial;
         }
@@ -574,14 +741,18 @@ namespace AncientTree.Board
         {
             if (_sharedHighlightMaterial == null)
             {
-                var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color");
-                _sharedHighlightMaterial = new Material(shader);
-                _sharedHighlightMaterial.color = new Color(0.20f, 1.0f, 0.30f, 0.72f);
-                _sharedHighlightMaterial.SetFloat("_Surface", 1);
-                _sharedHighlightMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                _sharedHighlightMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                _sharedHighlightMaterial.SetInt("_ZWrite", 0);
-                _sharedHighlightMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                _sharedHighlightMaterial = Resources.Load<Material>("Materials/HighlightMaterial");
+                if (_sharedHighlightMaterial == null)
+                {
+                    var shader = GetSafeShader(unlit: true);
+                    _sharedHighlightMaterial = new Material(shader);
+                    _sharedHighlightMaterial.color = new Color(0.20f, 1.0f, 0.30f, 0.72f);
+                    _sharedHighlightMaterial.SetFloat("_Surface", 1);
+                    _sharedHighlightMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                    _sharedHighlightMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                    _sharedHighlightMaterial.SetInt("_ZWrite", 0);
+                    _sharedHighlightMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                }
             }
             return _sharedHighlightMaterial;
         }
@@ -590,14 +761,18 @@ namespace AncientTree.Board
         {
             if (_sharedTerritoryMaterial == null)
             {
-                var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color");
-                _sharedTerritoryMaterial = new Material(shader);
-                _sharedTerritoryMaterial.color = new Color(1f, 1f, 1f, 0.72f);
-                _sharedTerritoryMaterial.SetFloat("_Surface", 1);
-                _sharedTerritoryMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                _sharedTerritoryMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                _sharedTerritoryMaterial.SetInt("_ZWrite", 0);
-                _sharedTerritoryMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                _sharedTerritoryMaterial = Resources.Load<Material>("Materials/TerritoryMaterial");
+                if (_sharedTerritoryMaterial == null)
+                {
+                    var shader = GetSafeShader(unlit: true);
+                    _sharedTerritoryMaterial = new Material(shader);
+                    _sharedTerritoryMaterial.color = new Color(1f, 1f, 1f, 0.72f);
+                    _sharedTerritoryMaterial.SetFloat("_Surface", 1);
+                    _sharedTerritoryMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                    _sharedTerritoryMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                    _sharedTerritoryMaterial.SetInt("_ZWrite", 0);
+                    _sharedTerritoryMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                }
             }
             return _sharedTerritoryMaterial;
         }

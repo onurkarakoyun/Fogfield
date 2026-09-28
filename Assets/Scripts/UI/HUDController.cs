@@ -224,7 +224,11 @@ namespace AncientTree.UI
             }
 
             if (_diceResultText != null) _diceResultText.text = "-";
-            if (_remainingHpText != null) _remainingHpText.text = "HP: 0";
+            if (_remainingHpText != null)
+            {
+                string label = LocalizationManager.Instance?.CurrentLanguage == "EN" ? "Steps" : "Adım";
+                _remainingHpText.text = $"{label}: -";
+            }
 
             int totalPlayers = TurnManager.Instance != null ? TurnManager.Instance.PlayerCount : 0;
             if (_scoreRows.Count != totalPlayers)
@@ -287,7 +291,9 @@ namespace AncientTree.UI
         {
             if (_remainingHpText != null)
             {
-                _remainingHpText.text = $"HP: {remaining}";
+                string label = LocalizationManager.Instance?.CurrentLanguage == "EN" ? "Adım" : "Adım";
+                if (LocalizationManager.Instance?.CurrentLanguage == "EN") label = "Steps";
+                _remainingHpText.text = $"{label}: {remaining}";
             }
             UpdateActionButtons();
         }
@@ -362,8 +368,9 @@ namespace AncientTree.UI
         {
             if (_scoreboardTitleText != null)
             {
-                string format = LocalizationManager.Instance?.Get("ROUND_TITLE_FORMAT") ?? "Skor Tablosu (Hedef: 15) - Raunt {0}";
-                _scoreboardTitleText.text = string.Format(format, round);
+                int targetScore = PlayerData.TargetScoreToWin;
+                string format = LocalizationManager.Instance?.Get("ROUND_TITLE_FORMAT") ?? "Skor Tablosu (Hedef: {1}) - Raunt {0}";
+                _scoreboardTitleText.text = string.Format(format, round, targetScore);
             }
         }
 
