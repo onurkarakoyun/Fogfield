@@ -38,6 +38,12 @@ namespace AncientTree.Board
         public bool IsActionLocked => _isActionLocked;
         public bool IsRelocating => _isRelocating;
 
+        public void TriggerBotTurn()
+        {
+            if (_botTurnCoroutine != null) StopCoroutine(_botTurnCoroutine);
+            _botTurnCoroutine = StartCoroutine(BotTurnRoutine());
+        }
+
         public static readonly Color[] PlayerColors = new Color[]
         {
             new Color(0.18f, 0.52f, 0.95f), // Slot 1: Mavi
@@ -205,7 +211,13 @@ namespace AncientTree.Board
 
                 if (player.IsBot)
                 {
-                    _botTurnCoroutine = StartCoroutine(BotTurnRoutine());
+                    bool isOnlineClient = AncientTree.Network.FogfieldNetworkManager.Instance != null &&
+                                          AncientTree.Network.FogfieldNetworkManager.Instance.IsOnline &&
+                                          !AncientTree.Network.FogfieldNetworkManager.Instance.IsHost;
+                    if (!isOnlineClient)
+                    {
+                        _botTurnCoroutine = StartCoroutine(BotTurnRoutine());
+                    }
                 }
             }
         }
@@ -412,6 +424,7 @@ namespace AncientTree.Board
                     player.AddSettlement(currentTile.GridCoords);
                     player.RoundYield = SettlementManager.Instance.CalculatePlayerSettlementYield(_activePlayerIndex);
                     GameEvents.TriggerPlayerYieldUpdated(_activePlayerIndex, player.RoundYield);
+                    GameEvents.TriggerPlayerScoreUpdated(_activePlayerIndex, player.TotalScore);
                     return true;
                 }
             }
@@ -470,6 +483,7 @@ namespace AncientTree.Board
                     player.AddSettlement(currentTile.GridCoords);
                     player.RoundYield = SettlementManager.Instance.CalculatePlayerSettlementYield(_activePlayerIndex);
                     GameEvents.TriggerPlayerYieldUpdated(_activePlayerIndex, player.RoundYield);
+                    GameEvents.TriggerPlayerScoreUpdated(_activePlayerIndex, player.TotalScore);
 
                     CancelRelocationMode();
                 }
@@ -519,9 +533,12 @@ namespace AncientTree.Board
         /// </summary>
         private void ProcessRoundEnd()
         {
-            // 1. Accumulate round yield into TotalScore for each player
-            foreach (var player in _players)
+            // 1. Accumulate round yield into TotalScore for each player (starting strictly from index 0)
+            for (int i = 0; i < _players.Count; i++)
             {
+                var player = _players[i];
+                if (player == null) continue;
+
                 int yield = SettlementManager.Instance.CalculatePlayerSettlementYield(player.PlayerIndex);
                 player.RoundYield = yield;
                 player.TotalScore += yield;

@@ -55,6 +55,10 @@ namespace AncientTree.UI
         [SerializeField] private Button _victoryRestartButton;
         [SerializeField] private ParticleSystem _victoryConfettiVfx;
 
+        [Header("Online Match Info")]
+        [SerializeField] private GameObject _onlineRoomCodeBadge;
+        [SerializeField] private TextMeshProUGUI _onlineRoomCodeText;
+
         private readonly List<ScoreRowUI> _scoreRows = new List<ScoreRowUI>();
         private Tween _alertTween;
         private Tween _diceShakeTween;
@@ -68,6 +72,12 @@ namespace AncientTree.UI
             public TextMeshProUGUI YieldText;
             public TextMeshProUGUI ScoreText;
             public GameObject ActiveBorder;
+            public TextMeshProUGUI FloatingGainText;
+            public UnityEngine.UI.Outline RowOutline;
+            public int CurrentScore;
+            public Tween RollingScoreTween;
+            public Sequence FloatingTextSequence;
+            public Tween FlashTween;
         }
 
         private void Awake()
@@ -189,11 +199,27 @@ namespace AncientTree.UI
             if (isGameplay)
             {
                 if (_victoryPopup != null) _victoryPopup.SetActive(false);
+                UpdateOnlineRoomBadge();
             }
             else if (state == GameState.MainMenu)
             {
                 if (_victoryPopup != null) _victoryPopup.SetActive(false);
+                if (_onlineRoomCodeBadge != null) _onlineRoomCodeBadge.SetActive(false);
                 ClearScoreboard();
+            }
+        }
+
+        public void UpdateOnlineRoomBadge()
+        {
+            if (_onlineRoomCodeBadge == null) return;
+
+            var netMgr = AncientTree.Network.FogfieldNetworkManager.Instance;
+            bool isOnline = netMgr != null && (netMgr.IsHost || netMgr.IsClient) && !string.IsNullOrEmpty(netMgr.CurrentRoom.RoomCode);
+
+            _onlineRoomCodeBadge.SetActive(isOnline);
+            if (isOnline && _onlineRoomCodeText != null)
+            {
+                _onlineRoomCodeText.text = $"ODA KODU: {netMgr.CurrentRoom.RoomCode}";
             }
         }
 
@@ -201,6 +227,9 @@ namespace AncientTree.UI
         {
             foreach (var row in _scoreRows)
             {
+                row.RollingScoreTween?.Kill();
+                row.FloatingTextSequence?.Kill();
+                row.FlashTween?.Kill();
                 if (row.Root != null) Destroy(row.Root);
             }
             _scoreRows.Clear();
@@ -216,6 +245,7 @@ namespace AncientTree.UI
 
         private void HandlePlayerTurnStarted(int playerIndex, string playerName, Color playerColor)
         {
+            UpdateOnlineRoomBadge();
             if (_playerColorBanner != null) _playerColorBanner.color = playerColor;
             if (_playerTurnText != null)
             {
@@ -543,6 +573,8 @@ namespace AncientTree.UI
                 TextMeshProUGUI yieldTxt;
                 TextMeshProUGUI scoreTxt;
                 GameObject activeBorder;
+                TextMeshProUGUI floatingGainTxt;
+                UnityEngine.UI.Outline rowOutline;
 
                 if (_scoreRowPrefab != null)
                 {
@@ -553,11 +585,13 @@ namespace AncientTree.UI
                     yieldTxt = rowObj.transform.Find("YieldText")?.GetComponent<TextMeshProUGUI>();
                     scoreTxt = rowObj.transform.Find("ScoreText")?.GetComponent<TextMeshProUGUI>();
                     activeBorder = rowObj.transform.Find("ActiveBorder")?.gameObject;
+                    floatingGainTxt = rowObj.transform.Find("FloatingGainText")?.GetComponent<TextMeshProUGUI>();
+                    rowOutline = rowObj.GetComponent<UnityEngine.UI.Outline>();
                 }
                 else
                 {
                     rowObj = CreateDefaultScoreRow(player.PlayerName, player.PlayerColor, sCount, yield, player.TotalScore, pointUnit,
-                        out img, out nameTxt, out settTxt, out yieldTxt, out scoreTxt, out activeBorder);
+                        out img, out nameTxt, out settTxt, out yieldTxt, out scoreTxt, out activeBorder, out floatingGainTxt, out rowOutline);
                     rowObj.transform.SetParent(_scoreboardContainer, false);
                 }
 
@@ -580,7 +614,10 @@ namespace AncientTree.UI
                     SettlementText = settTxt,
                     YieldText = yieldTxt,
                     ScoreText = scoreTxt,
-                    ActiveBorder = activeBorder
+                    ActiveBorder = activeBorder,
+                    FloatingGainText = floatingGainTxt,
+                    RowOutline = rowOutline,
+                    CurrentScore = player.TotalScore
                 });
             }
         }
@@ -592,11 +629,75 @@ namespace AncientTree.UI
                 var row = _scoreRows[playerIndex];
                 string pointUnit = LocalizationManager.Instance?.Get("SCORE_UNIT") ?? "Puan";
 
-                if (row.ScoreText != null)
+                int oldScore = row.CurrentScore;
+                int diff = score - oldScore;
+
+                if (diff > 0)
                 {
-                    row.ScoreText.text = $"{score} / {PlayerData.TargetScoreToWin} {pointUnit}";
-                    row.ScoreText.transform.DOPunchScale(Vector3.one * 0.25f, 0.2f).SetLink(row.ScoreText.gameObject);
+                    // 1. Audio SFX
+                    AudioManager.Instance?.PlayScoreGain();
+
+                    // 2. Rolling Counter (DOVirtual.Int)
+                    row.RollingScoreTween?.Kill();
+                    row.RollingScoreTween = DOVirtual.Int(oldScore, score, 0.5f, val =>
+                    {
+                        if (row.ScoreText != null)
+                        {
+                            row.ScoreText.text = $"{val} / {PlayerData.TargetScoreToWin} {pointUnit}";
+                        }
+                    }).SetEase(Ease.OutQuad).SetLink(row.Root);
+
+                    // 3. Row Punch & Outline Gold Flash
+                    row.Root.transform.DOKill(true);
+                    row.Root.transform.DOPunchScale(Vector3.one * 0.06f, 0.35f, 8, 1).SetLink(row.Root);
+
+                    if (row.RowOutline != null)
+                    {
+                        row.FlashTween?.Kill();
+                        row.RowOutline.effectColor = new Color(1f, 0.85f, 0.2f, 0.9f);
+                        row.FlashTween = DOVirtual.Float(0.9f, 0f, 0.6f, alpha =>
+                        {
+                            if (row.RowOutline != null)
+                            {
+                                row.RowOutline.effectColor = new Color(1f, 0.85f, 0.2f, alpha);
+                            }
+                        }).SetLink(row.Root);
+                    }
+
+                    // 4. Floating Gain Text (+X Puan)
+                    if (row.FloatingGainText != null)
+                    {
+                        row.FloatingTextSequence?.Kill();
+                        var fObj = row.FloatingGainText.gameObject;
+                        fObj.SetActive(true);
+                        row.FloatingGainText.text = $"+{diff} {pointUnit}";
+                        row.FloatingGainText.alpha = 1f;
+
+                        var fRt = row.FloatingGainText.rectTransform;
+                        Vector2 startPos = new Vector2(-10f, 0f);
+                        fRt.anchoredPosition = startPos;
+
+                        var seq = DOTween.Sequence();
+                        seq.SetLink(fObj);
+                        seq.Append(fRt.DOAnchorPosY(startPos.y + 45f, 0.7f).SetEase(Ease.OutCubic));
+                        seq.Join(row.FloatingGainText.DOFade(0f, 0.7f).SetEase(Ease.InQuad));
+                        seq.OnComplete(() =>
+                        {
+                            fObj.SetActive(false);
+                            fRt.anchoredPosition = startPos;
+                        });
+                        row.FloatingTextSequence = seq;
+                    }
                 }
+                else
+                {
+                    if (row.ScoreText != null)
+                    {
+                        row.ScoreText.text = $"{score} / {PlayerData.TargetScoreToWin} {pointUnit}";
+                    }
+                }
+
+                row.CurrentScore = score;
 
                 if (row.SettlementText != null && SettlementManager.Instance != null)
                 {
@@ -614,7 +715,8 @@ namespace AncientTree.UI
         }
 
         private GameObject CreateDefaultScoreRow(string playerName, Color color, int settlements, int yield, int score, string pointUnit,
-            out Image colorImg, out TextMeshProUGUI nameTxt, out TextMeshProUGUI settTxt, out TextMeshProUGUI yieldTxt, out TextMeshProUGUI scoreTxt, out GameObject activeBorder)
+            out Image colorImg, out TextMeshProUGUI nameTxt, out TextMeshProUGUI settTxt, out TextMeshProUGUI yieldTxt, out TextMeshProUGUI scoreTxt, out GameObject activeBorder,
+            out TextMeshProUGUI floatingGainTxt, out UnityEngine.UI.Outline rowOutline)
         {
             GameObject row = new GameObject("ScoreRow");
             var rt = row.AddComponent<RectTransform>();
@@ -629,6 +731,11 @@ namespace AncientTree.UI
             var rowBg = row.AddComponent<Image>();
             rowBg.color = new Color(0.13f, 0.16f, 0.22f, 0.90f);
             rowBg.raycastTarget = false;
+
+            // Row outline for punch & gold flash
+            rowOutline = row.AddComponent<UnityEngine.UI.Outline>();
+            rowOutline.effectColor = new Color(1f, 0.85f, 0.2f, 0f);
+            rowOutline.effectDistance = new Vector2(2f, -2f);
 
             // Active Border / Highlight Glow
             activeBorder = new GameObject("ActiveBorder");
@@ -730,6 +837,23 @@ namespace AncientTree.UI
             scoreTxt.color = new Color(1f, 0.85f, 0.2f);
             scoreTxt.raycastTarget = false;
 
+            // Floating Gain Text (Popup animation on score increase)
+            GameObject floatObj = new GameObject("FloatingGainText");
+            floatObj.transform.SetParent(row.transform, false);
+            var fRt = floatObj.AddComponent<RectTransform>();
+            fRt.anchorMin = new Vector2(1f, 0.5f);
+            fRt.anchorMax = new Vector2(1f, 0.5f);
+            fRt.pivot = new Vector2(1f, 0.5f);
+            fRt.anchoredPosition = new Vector2(-10f, 0f);
+            fRt.sizeDelta = new Vector2(90f, 26f);
+            floatingGainTxt = floatObj.AddComponent<TextMeshProUGUI>();
+            floatingGainTxt.fontSize = 13;
+            floatingGainTxt.fontStyle = FontStyles.Bold;
+            floatingGainTxt.alignment = TextAlignmentOptions.MidlineRight;
+            floatingGainTxt.color = new Color(1f, 0.88f, 0.25f, 1f);
+            floatingGainTxt.raycastTarget = false;
+            floatObj.SetActive(false);
+
             return row;
         }
 
@@ -759,6 +883,12 @@ namespace AncientTree.UI
         {
             _alertTween?.Kill();
             _diceShakeTween?.Kill();
+            foreach (var row in _scoreRows)
+            {
+                row.RollingScoreTween?.Kill();
+                row.FloatingTextSequence?.Kill();
+                row.FlashTween?.Kill();
+            }
         }
     }
 }

@@ -97,6 +97,9 @@ namespace AncientTree.Audio
         public void PlayMountainBonk() => PlaySfx(_clipMountain, 1.0f);
         public void PlayBuildSettlement() => PlaySfx(_clipBuild, 0.9f);
         public void PlayVictoryFanfare() => PlaySfx(_clipVictory, 1.0f);
+        public void PlayCountdownTick(int second) => PlaySfx(_clipClick, 0.75f + (4 - Mathf.Clamp(second, 1, 3)) * 0.25f);
+        public void PlayCountdownStart() => PlaySfx(_clipVictory, 1.25f);
+        public void PlayScoreGain() => PlaySfx(_clipBuild, 1.35f);
 
         private void PlaySfx(AudioClip clip, float pitch = 1f)
         {

@@ -14,6 +14,18 @@ namespace AncientTree.Board
         // Center is (5,5) in 0-indexed coords, corresponding to (6,6) in 1-indexed board coordinates
         public static readonly Vector2Int CenterCoords = new Vector2Int(5, 5);
 
+        public static MapGenerator Instance { get; private set; }
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+            Instance = this;
+        }
+
         [Header("Tile Spacing & Dimensions")]
         [SerializeField] private float _tileSize = 4.2f;
         [SerializeField] private float _tilePadding = 0.4f;
@@ -24,7 +36,7 @@ namespace AncientTree.Board
 
         public float TileSize => _tileSize;
         public float TilePadding => _tilePadding;
-        public float TileSpacing => Mathf.Max(_tileSize + _tilePadding, _tileSize);
+        public float TileSpacing => _tileSpacing > 0f ? _tileSpacing : Mathf.Max(_tileSize + _tilePadding, _tileSize);
 
         [Header("3D Karo Prefabs")]
         [SerializeField] private GameObject _karoAncientTreePrefab;
@@ -625,16 +637,21 @@ namespace AncientTree.Board
             highlight.GetComponent<MeshRenderer>().sharedMaterial = GetSharedHighlightMaterial();
             highlight.SetActive(false);
 
-            // Territory claim surface overlay (player color takeover frame, scaled to _tileSize)
-            GameObject territory = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            territory.name = "TerritorySurfaceOverlay";
+            // Territory claim outer border frame (player color takeover frame around perimeter)
+            GameObject territory = new GameObject("TerritoryBorderFrame");
             territory.transform.SetParent(tileObj.transform, false);
-            territory.transform.localPosition = new Vector3(0f, 0.670f, 0f);
-            territory.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-            territory.transform.localScale = new Vector3(_tileSize, _tileSize, 1f);
-            var tCol = territory.GetComponent<Collider>();
-            if (tCol != null) Destroy(tCol);
-            territory.GetComponent<MeshRenderer>().sharedMaterial = GetSharedTerritoryMaterial();
+            territory.transform.localPosition = new Vector3(0f, 0.678f, 0f);
+
+            float borderThick = 0.32f; // clean, crisp 0.32m perimeter border frame
+            float halfSize = _tileSize * 0.5f;
+            float borderOffset = halfSize - (borderThick * 0.5f);
+            var borderMat = GetSharedTerritoryMaterial();
+
+            CreateBorderQuad("NorthBorder", territory.transform, new Vector3(0f, 0f, borderOffset), new Vector2(_tileSize, borderThick), borderMat);
+            CreateBorderQuad("SouthBorder", territory.transform, new Vector3(0f, 0f, -borderOffset), new Vector2(_tileSize, borderThick), borderMat);
+            CreateBorderQuad("WestBorder", territory.transform, new Vector3(-borderOffset, 0f, 0f), new Vector2(borderThick, _tileSize - 2f * borderThick), borderMat);
+            CreateBorderQuad("EastBorder", territory.transform, new Vector3(borderOffset, 0f, 0f), new Vector2(borderThick, _tileSize - 2f * borderThick), borderMat);
+
             territory.SetActive(false);
 
             // Assign dedicated "Tile" layer to root and all children
@@ -660,6 +677,20 @@ namespace AncientTree.Board
                 var child = obj.transform.GetChild(i);
                 if (child != null) SetLayerRecursively(child.gameObject, layer);
             }
+        }
+
+        private static void CreateBorderQuad(string name, Transform parent, Vector3 localPos, Vector2 size, Material mat)
+        {
+            var quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            quad.name = name;
+            quad.transform.SetParent(parent, false);
+            quad.transform.localPosition = localPos;
+            quad.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            quad.transform.localScale = new Vector3(size.x, size.y, 1f);
+            var col = quad.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+            var rend = quad.GetComponent<MeshRenderer>();
+            if (rend != null) rend.sharedMaterial = mat;
         }
 
         private void WireTileFields(TileController ctrl, Transform visualTr, MeshRenderer topRend, MeshRenderer fogRend, GameObject glimmer, GameObject highlight, GameObject territory, TextMeshPro tmp)

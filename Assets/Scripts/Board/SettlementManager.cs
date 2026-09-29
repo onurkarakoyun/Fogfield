@@ -95,15 +95,50 @@ namespace AncientTree.Board
 
         public int CalculatePlayerSettlementYield(int playerIndex)
         {
-            if (!_playerSettlements.TryGetValue(playerIndex, out var list)) return 0;
             int total = 0;
-            foreach (var tile in list)
+            if (_playerSettlements.TryGetValue(playerIndex, out var list) && list != null && list.Count > 0)
             {
-                if (tile != null)
+                for (int i = list.Count - 1; i >= 0; i--)
                 {
-                    total += tile.PointValue;
+                    var tile = list[i];
+                    if (tile != null && tile.HasSettlement && tile.SettlementOwnerIndex == playerIndex)
+                    {
+                        total += tile.PointValue;
+                    }
+                    else if (tile != null && (!tile.HasSettlement || tile.SettlementOwnerIndex != playerIndex))
+                    {
+                        list.RemoveAt(i);
+                    }
+                }
+                if (total > 0) return total;
+            }
+
+            // Fallback scan from MapGenerator if list was empty or out-of-sync
+            if (MapGenerator.Instance != null)
+            {
+                var allTiles = MapGenerator.Instance.GetAllTiles();
+                if (allTiles != null)
+                {
+                    int w = allTiles.GetLength(0);
+                    int h = allTiles.GetLength(1);
+                    for (int x = 0; x < w; x++)
+                    {
+                        for (int y = 0; y < h; y++)
+                        {
+                            var t = allTiles[x, y];
+                            if (t != null && t.HasSettlement && t.SettlementOwnerIndex == playerIndex)
+                            {
+                                total += t.PointValue;
+                                if (list != null && !list.Contains(t))
+                                {
+                                    list.Add(t);
+                                }
+                            }
+                        }
+                    }
                 }
             }
+
             return total;
         }
 

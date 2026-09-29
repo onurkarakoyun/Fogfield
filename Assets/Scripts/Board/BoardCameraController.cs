@@ -25,17 +25,17 @@ namespace AncientTree.Board
         [SerializeField] private Vector2 _zBounds = new Vector2(-40f, 15f);
 
         [Header("Zoom Settings — Orthographic")]
-        [SerializeField] private float _minOrthoSize = 8f;
-        [SerializeField] private float _maxOrthoSize = 26f;
+        [SerializeField] private float _minOrthoSize = 4f;
+        [SerializeField] private float _maxOrthoSize = 36f;
 
         [Header("Zoom Settings — Perspective")]
-        [SerializeField] private float _minFov = 25f;
-        [SerializeField] private float _maxFov = 65f;
+        [SerializeField] private float _minFov = 15f;
+        [SerializeField] private float _maxFov = 75f;
 
         [Header("Zoom Speed & Damping")]
-        [SerializeField] private float _scrollZoomSpeed = 6f;
-        [SerializeField] private float _pinchZoomSpeed = 0.05f;
-        [SerializeField] private float _zoomDamping = 10f;
+        [SerializeField] private float _scrollZoomSpeed = 16f;
+        [SerializeField] private float _pinchZoomSpeed = 0.12f;
+        [SerializeField] private float _zoomDamping = 16f;
 
         [Header("Height Boundaries (Y — pan only)")]
         [SerializeField] private float _minHeight = 20f;
@@ -226,9 +226,16 @@ namespace AncientTree.Board
             // --- PC: Mouse scroll wheel ---
             if (UnityEngine.InputSystem.Mouse.current != null)
             {
-                float scroll = UnityEngine.InputSystem.Mouse.current.scroll.ReadValue().y;
-                if (Mathf.Abs(scroll) > 0.1f)
-                    delta = -scroll * 0.01f * _scrollZoomSpeed; // negative: scroll up = zoom in
+                float rawScroll = UnityEngine.InputSystem.Mouse.current.scroll.ReadValue().y;
+                if (Mathf.Abs(rawScroll) > 0.01f)
+                {
+                    // Normalize mouse wheel: Windows delivers +/-120 per notch, normalized APIs deliver +/-1
+                    float notches = Mathf.Abs(rawScroll) >= 10f ? (rawScroll / 120f) : Mathf.Sign(rawScroll) * Mathf.Max(1f, Mathf.Abs(rawScroll));
+                    // Proportional step: nimble at close range, broader when far away, at least 3.2 units per wheel notch
+                    float baseStep = _cam.orthographic ? Mathf.Max(3.2f, _targetZoom * 0.18f) : Mathf.Max(5.0f, _targetZoom * 0.18f);
+                    float step = baseStep * Mathf.Max(0.5f, _scrollZoomSpeed / 16f);
+                    delta = -notches * step;
+                }
             }
 
             // --- Mobile: 2-finger pinch ---

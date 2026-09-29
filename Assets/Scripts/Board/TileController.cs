@@ -302,33 +302,34 @@ namespace AncientTree.Board
             if (_territoryOverlayObject != null)
             {
                 _territoryOverlayObject.SetActive(true);
-                var tRend = _territoryOverlayObject.GetComponent<MeshRenderer>();
-                if (tRend != null)
+                var renderers = _territoryOverlayObject.GetComponentsInChildren<MeshRenderer>(true);
+                if (renderers != null && renderers.Length > 0)
                 {
                     if (_territoryPropBlock == null) _territoryPropBlock = new MaterialPropertyBlock();
                     float alpha = 0f;
                     _territoryTween = DOTween.To(() => alpha, a =>
                     {
                         alpha = a;
-                        tRend.GetPropertyBlock(_territoryPropBlock);
                         Color c = new Color(playerColor.r, playerColor.g, playerColor.b, alpha);
-                        _territoryPropBlock.SetColor("_BaseColor", c);
-                        _territoryPropBlock.SetColor("_Color", c);
-                        tRend.SetPropertyBlock(_territoryPropBlock);
-                    }, 0.72f, 0.3f)
+                        foreach (var rend in renderers)
+                        {
+                            if (rend == null) continue;
+                            rend.GetPropertyBlock(_territoryPropBlock);
+                            _territoryPropBlock.SetColor("_BaseColor", c);
+                            _territoryPropBlock.SetColor("_Color", c);
+                            _territoryPropBlock.SetColor("_EmissionColor", playerColor * 1.2f);
+                            rend.SetPropertyBlock(_territoryPropBlock);
+                        }
+                    }, 0.95f, 0.25f)
                     .SetEase(Ease.OutQuad)
                     .SetLink(_territoryOverlayObject);
                 }
             }
 
-            // Smoothly tint the 3D karo model surface with player color & glowing accent
-            if (_topFaceRenderer != null)
+            // Central terrain texture is preserved 100% natural and sharp - DO NOT tint _topFaceRenderer!
+            if (_topFaceRenderer != null && _karoPropBlock != null)
             {
-                if (_karoPropBlock == null) _karoPropBlock = new MaterialPropertyBlock();
-                _topFaceRenderer.GetPropertyBlock(_karoPropBlock);
-                Color targetTint = Color.Lerp(Color.white, playerColor, 0.60f);
-                _karoPropBlock.SetColor("_BaseColor", targetTint);
-                _karoPropBlock.SetColor("_EmissionColor", playerColor * 0.9f);
+                _karoPropBlock.Clear();
                 _topFaceRenderer.SetPropertyBlock(_karoPropBlock);
             }
 
@@ -353,20 +354,24 @@ namespace AncientTree.Board
 
             if (_territoryOverlayObject != null && _territoryOverlayObject.activeSelf)
             {
-                var tRend = _territoryOverlayObject.GetComponent<MeshRenderer>();
-                if (tRend != null && _territoryPropBlock != null)
+                var renderers = _territoryOverlayObject.GetComponentsInChildren<MeshRenderer>(true);
+                if (renderers != null && renderers.Length > 0 && _territoryPropBlock != null)
                 {
-                    float alpha = 0.72f;
+                    float alpha = 0.95f;
                     _territoryTween = DOTween.To(() => alpha, a =>
                     {
                         alpha = a;
-                        tRend.GetPropertyBlock(_territoryPropBlock);
-                        Color c = _territoryPropBlock.GetColor("_BaseColor");
-                        c.a = alpha;
-                        _territoryPropBlock.SetColor("_BaseColor", c);
-                        _territoryPropBlock.SetColor("_Color", c);
-                        tRend.SetPropertyBlock(_territoryPropBlock);
-                    }, 0f, 0.25f)
+                        foreach (var rend in renderers)
+                        {
+                            if (rend == null) continue;
+                            rend.GetPropertyBlock(_territoryPropBlock);
+                            Color c = _territoryPropBlock.GetColor("_BaseColor");
+                            c.a = alpha;
+                            _territoryPropBlock.SetColor("_BaseColor", c);
+                            _territoryPropBlock.SetColor("_Color", c);
+                            rend.SetPropertyBlock(_territoryPropBlock);
+                        }
+                    }, 0f, 0.20f)
                     .SetEase(Ease.InQuad)
                     .SetLink(_territoryOverlayObject)
                     .OnComplete(() => _territoryOverlayObject.SetActive(false));

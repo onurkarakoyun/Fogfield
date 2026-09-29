@@ -87,10 +87,18 @@ namespace AncientTree.UI
         private Tween _toastTween;
         private Tween _howToPlayTween;
 
+        public static MainMenuController Instance { get; private set; }
+
         private void Awake()
         {
+            Instance = this;
             SetupButtonListeners();
             if (_howToPlayModal != null) _howToPlayModal.SetActive(false);
+        }
+
+        public void ShowMainButtons()
+        {
+            ShowPanel(_mainButtonsPanel);
         }
 
         private void OnEnable()
@@ -191,7 +199,7 @@ namespace AncientTree.UI
             _onlineModeButton?.onClick.AddListener(() =>
             {
                 AudioManager.Instance?.PlayClick();
-                ShowToast(LocalizationManager.Instance?.Get("COMING_SOON") ?? "Çok Yakında!");
+                LobbyMenuController.Instance?.OpenLobby();
             });
 
             _modeBackButton?.onClick.AddListener(() =>
@@ -383,7 +391,7 @@ namespace AncientTree.UI
                 if (_howToPlayModal != null) _howToPlayModal.SetActive(false);
 
                 // If splash / intro screen is active, do not flash menu; stay hidden until splash finishes
-                if (SplashScreenController.Instance != null && !SplashScreenController.Instance.IsFinished)
+                if (SplashManager.Instance != null && !SplashManager.Instance.IsFinished)
                 {
                     if (_menuCanvasGroup != null)
                     {
