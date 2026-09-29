@@ -158,6 +158,7 @@ namespace AncientTree.Editor
 
             // Network manager & lobby controller on [GameControllers] (pure MonoBehaviours)
             var netMgr = GetOrAdd<FogfieldNetworkManager>(managersObj);
+            var netDisc = GetOrAdd<FogfieldNetworkDiscovery>(managersObj);
             var lobbyCtrl = GetOrAdd<LobbyMenuController>(managersObj);
 
             // Clean up any NetworkObject/NetworkTurnManager from [GameControllers] so FishNet scene deactivation NEVER touches core game controllers
@@ -895,6 +896,7 @@ namespace AncientTree.Editor
 
             // BOTTOM BAR: Controls, 1d4 Dice, Build, Relocate, End Turn
             GameObject bottomBar = CreateUIPanel("BottomBar", hudRoot.transform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 75), new Vector2(850, 110), new Color(0.1f, 0.12f, 0.16f, 0.95f));
+            var bottomBarCg = bottomBar.AddComponent<CanvasGroup>();
 
             // Dice roll button with icon & text
             var rollBtn = CreateStyledButton("RollDiceButton", bottomBar.transform, "ZAR AT", new Vector2(-280, 0), new Vector2(160, 65), new Color(0.85f, 0.55f, 0.12f));
@@ -997,6 +999,8 @@ namespace AncientTree.Editor
             SetField(hudCtrl, "_hudCanvasGroup", hudCg);
             SetField(hudCtrl, "_playerColorBanner", bannerImg);
             SetField(hudCtrl, "_playerTurnText", turnTxtObj.GetComponent<TextMeshProUGUI>());
+            SetField(hudCtrl, "_bottomBar", bottomBar);
+            SetField(hudCtrl, "_bottomBarCanvasGroup", bottomBarCg);
 
             SetField(hudCtrl, "_rollDiceButton", rollBtn.GetComponent<Button>());
             SetField(hudCtrl, "_diceVisualTransform", diceVisual);
@@ -1100,8 +1104,8 @@ namespace AncientTree.Editor
 
         private static void BuildTileLegendUI(Transform hudRoot)
         {
-            // Panel container on right side (expanded to 260px for clean layout)
-            GameObject legendPanel = CreateUIPanel("TileLegendPanel", hudRoot, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-20f, -74f), new Vector2(260f, 310f), new Color(0.10f, 0.12f, 0.17f, 0.94f));
+            // Compact 125px panel container anchored Top-Right
+            GameObject legendPanel = CreateUIPanel("TileLegendPanel", hudRoot, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-15f, -74f), new Vector2(125f, 290f), new Color(0.10f, 0.12f, 0.17f, 0.94f));
             var lpRt = legendPanel.GetComponent<RectTransform>();
             lpRt.pivot = new Vector2(1f, 1f);
 
@@ -1110,21 +1114,21 @@ namespace AncientTree.Editor
             panelOutline.effectDistance = new Vector2(1.5f, -1.5f);
             legendPanel.AddComponent<RectMask2D>();
 
-            // Title
-            var title = CreateUIText("LegendTitle", legendPanel.transform, "KARO PUANLARI", 13.5f, FontStyles.Bold, new Color(1f, 0.85f, 0.2f), TextAlignmentOptions.Center);
-            SetRect(title.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -10), new Vector2(240, 22));
+            // Title (Compact 12pt)
+            var title = CreateUIText("LegendTitle", legendPanel.transform, "KARO PUANLARI", 12f, FontStyles.Bold, new Color(1f, 0.85f, 0.2f), TextAlignmentOptions.Center);
+            SetRect(title.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -9), new Vector2(115, 18));
 
             // Divider
-            CreateUIPanel("LegendDivider", legendPanel.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -28f), new Vector2(240f, 1.5f), new Color(0.25f, 0.38f, 0.50f, 0.6f));
+            CreateUIPanel("LegendDivider", legendPanel.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -23f), new Vector2(110f, 1.5f), new Color(0.25f, 0.38f, 0.50f, 0.6f));
 
             // Content container (VerticalLayoutGroup)
             GameObject rowsContainer = CreateUIPanel("LegendRows", legendPanel.transform, new Vector2(0f, 0f), new Vector2(1f, 1f), Vector2.zero, Vector2.zero, Color.clear);
             RectTransform rowsRt = rowsContainer.GetComponent<RectTransform>();
-            rowsRt.offsetMin = new Vector2(8f, 8f);
-            rowsRt.offsetMax = new Vector2(-8f, -34f);
+            rowsRt.offsetMin = new Vector2(4f, 6f);
+            rowsRt.offsetMax = new Vector2(-4f, -27f);
 
             var vlg = rowsContainer.AddComponent<VerticalLayoutGroup>();
-            vlg.spacing = 4f;
+            vlg.spacing = 3f;
             vlg.childAlignment = TextAnchor.UpperCenter;
             vlg.childControlWidth = true;
             vlg.childControlHeight = false;
@@ -1132,29 +1136,39 @@ namespace AncientTree.Editor
             vlg.childForceExpandHeight = false;
 
             // 7 Tile rows with real textures from Assets/models/textures/karo model/
-            (string name, string pts, string guid, Color fallbackCol, Color ptsCol)[] legendData = new[]
+            // Note: Tile name texts are completely removed; each row is strictly [30x30 Icon] + [Points Text]
+            (string pts, string guid, Color fallbackCol, Color ptsCol)[] legendData = new[]
             {
-                ("Çorak Toprak", "+1 P", "9c3979deb09da3249a873a1791b0b49f", new Color(0.68f, 0.54f, 0.40f), Color.white),
-                ("Verimli Toprak", "+2 P", "8a3dc183f14ad5f4e80ac63613be41ef", new Color(0.35f, 0.72f, 0.38f), Color.white),
-                ("Bereketli Vadi", "+3 P", "025e0ab0f1d8f0442841b9dd8b96ad6e", new Color(0.18f, 0.82f, 0.55f), Color.white),
-                ("Kadim Cevher", "+4 P", "fbeb4a361e0c7e34d9db3fda61715319", new Color(1f, 0.82f, 0.15f), new Color(1f, 0.88f, 0.25f)),
-                ("Işıltılı Harabe", "+5 P", "aa9f8380c35180549a354254f4965770", new Color(0.92f, 0.55f, 1f), new Color(1f, 0.85f, 0.35f)),
-                ("Geçilmez Dağ", "ENGEL", "fb951fa76262df742be7646e61b7a692", new Color(0.55f, 0.58f, 0.65f), new Color(0.85f, 0.45f, 0.45f)),
-                ("Kadim Ağaç", "MERKEZ", "e0ae2cfb10875224ba9858024d9bc626", new Color(0.25f, 0.75f, 0.95f), new Color(0.4f, 0.85f, 1f))
+                ("+1 P", "9c3979deb09da3249a873a1791b0b49f", new Color(0.68f, 0.54f, 0.40f), Color.white),
+                ("+2 P", "8a3dc183f14ad5f4e80ac63613be41ef", new Color(0.35f, 0.72f, 0.38f), Color.white),
+                ("+3 P", "025e0ab0f1d8f0442841b9dd8b96ad6e", new Color(0.18f, 0.82f, 0.55f), Color.white),
+                ("+4 P", "fbeb4a361e0c7e34d9db3fda61715319", new Color(1f, 0.82f, 0.15f), new Color(1f, 0.84f, 0f)),
+                ("+5 P", "aa9f8380c35180549a354254f4965770", new Color(0.92f, 0.55f, 1f), new Color(1f, 0.84f, 0f)),
+                ("ENGEL", "fb951fa76262df742be7646e61b7a692", new Color(0.55f, 0.58f, 0.65f), new Color(1f, 0.40f, 0.40f)),
+                ("MERKEZ", "e0ae2cfb10875224ba9858024d9bc626", new Color(0.25f, 0.75f, 0.95f), new Color(0.30f, 0.93f, 0.92f))
             };
 
             for (int i = 0; i < legendData.Length; i++)
             {
-                var rowObj = CreateUIPanel($"Row_{i}", rowsContainer.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(244, 32), new Color(0.13f, 0.15f, 0.21f, 0.7f));
+                var rowObj = CreateUIPanel($"Row_{i}", rowsContainer.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(117, 32), new Color(0.13f, 0.15f, 0.21f, 0.7f));
                 var rLe = rowObj.AddComponent<LayoutElement>();
                 rLe.preferredHeight = 32f;
+
+                var hlg = rowObj.AddComponent<HorizontalLayoutGroup>();
+                hlg.padding = new RectOffset(8, 8, 1, 1);
+                hlg.spacing = 10f;
+                hlg.childAlignment = TextAnchor.MiddleLeft;
+                hlg.childControlWidth = false;
+                hlg.childControlHeight = false;
+                hlg.childForceExpandWidth = false;
+                hlg.childForceExpandHeight = false;
 
                 // Real texture sprite loading
                 string texPath = AssetDatabase.GUIDToAssetPath(legendData[i].guid);
                 Sprite karoSprite = !string.IsNullOrEmpty(texPath) ? AssetDatabase.LoadAssetAtPath<Sprite>(texPath) : null;
 
-                // 32x32 Tile Texture Icon
-                var badge = CreateUIPanel("Badge", rowObj.transform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(20, 0), new Vector2(32, 32), karoSprite != null ? Color.white : legendData[i].fallbackCol);
+                // 30x30 Tile Texture Icon
+                var badge = CreateUIPanel("Icon", rowObj.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(30, 30), karoSprite != null ? Color.white : legendData[i].fallbackCol);
                 var bImg = badge.GetComponent<Image>();
                 if (karoSprite != null)
                 {
@@ -1165,23 +1179,17 @@ namespace AncientTree.Editor
                 bOutline.effectColor = new Color(0.12f, 0.16f, 0.22f, 0.95f);
                 bOutline.effectDistance = new Vector2(1, -1);
 
-                // Name text with Auto-sizing and Ellipsis overflow
-                var nameTxt = CreateUIText("Name", rowObj.transform, legendData[i].name, 13f, FontStyles.Normal, Color.white, TextAlignmentOptions.MidlineLeft);
-                SetRect(nameTxt.GetComponent<RectTransform>(), new Vector2(0f, 0.5f), new Vector2(44, 0), new Vector2(142, 28));
-                var nTmp = nameTxt.GetComponent<TextMeshProUGUI>();
-                nTmp.enableAutoSizing = true;
-                nTmp.fontSizeMin = 11f;
-                nTmp.fontSizeMax = 15f;
-                nTmp.textWrappingMode = TextWrappingModes.Normal;
-                nTmp.overflowMode = TextOverflowModes.Ellipsis;
-
-                // Points text (Fixed 45px right-aligned badge)
-                var ptsTxt = CreateUIText("Points", rowObj.transform, legendData[i].pts, 12.5f, FontStyles.Bold, legendData[i].ptsCol, TextAlignmentOptions.MidlineRight);
-                SetRect(ptsTxt.GetComponent<RectTransform>(), new Vector2(1f, 0.5f), new Vector2(-10, 0), new Vector2(45, 28));
+                // Points text (Fixed 60px left-aligned bold badge, no text wrapping)
+                var ptsTxt = CreateUIText("Points", rowObj.transform, legendData[i].pts, 14f, FontStyles.Bold, legendData[i].ptsCol, TextAlignmentOptions.MidlineLeft);
+                var pTmp = ptsTxt.GetComponent<TextMeshProUGUI>();
+                pTmp.enableAutoSizing = false;
+                pTmp.textWrappingMode = TextWrappingModes.NoWrap;
+                var ptsRt = ptsTxt.GetComponent<RectTransform>();
+                ptsRt.sizeDelta = new Vector2(60, 26);
             }
 
             // Mini Fold/Expand Tab Button (on left edge of legend panel)
-            var foldBtnObj = CreateStyledButton("ToggleFoldBtn", legendPanel.transform, ">", Vector2.zero, new Vector2(30, 56), new Color(0.18f, 0.24f, 0.35f));
+            var foldBtnObj = CreateStyledButton("ToggleFoldBtn", legendPanel.transform, ">", Vector2.zero, new Vector2(26, 52), new Color(0.18f, 0.24f, 0.35f));
             var foldRt = foldBtnObj.GetComponent<RectTransform>();
             foldRt.anchorMin = new Vector2(0f, 0.5f);
             foldRt.anchorMax = new Vector2(0f, 0.5f);
@@ -1195,8 +1203,8 @@ namespace AncientTree.Editor
             SetField(legendCtrl, "_panelRoot", lpRt);
             SetField(legendCtrl, "_toggleButton", foldBtnObj.GetComponent<Button>());
             SetField(legendCtrl, "_toggleButtonText", foldTxt);
-            SetField(legendCtrl, "_expandedX", -20f);
-            SetField(legendCtrl, "_collapsedX", 280f);
+            SetField(legendCtrl, "_expandedX", -15f);
+            SetField(legendCtrl, "_collapsedX", 135f);
         }
 
         private static void BuildOnlineLobbyUI(Transform canvasRoot, GameObject managersObj)
@@ -1319,6 +1327,10 @@ namespace AncientTree.Editor
             Button[] slotKickButtons = new Button[4];
             Button[] slotAddBotButtons = new Button[4];
             Button[] slotRemoveBotButtons = new Button[4];
+            GameObject[] slotOccupiedContainers = new GameObject[4];
+            GameObject[] slotEmptyContainers = new GameObject[4];
+            GameObject[] slotCrownIcons = new GameObject[4];
+            GameObject[] slotReadyIcons = new GameObject[4];
 
             float[] slotX = new float[] { -270f, -90f, 90f, 270f };
             string[] slotColorTitles = new string[] { "Slot 1 (Mavi)", "Slot 2 (Kırmızı)", "Slot 3 (Yeşil)", "Slot 4 (Sarı)" };
@@ -1338,25 +1350,57 @@ namespace AncientTree.Editor
                 var sHeader = CreateUIText("Header", card.transform, slotColorTitles[i], 14, FontStyles.Bold, TurnManager.PlayerColors[i], TextAlignmentOptions.Center);
                 SetRect(sHeader.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -25), new Vector2(155, 24));
 
+                // --- OCCUPIED CONTAINER ---
+                var occContainer = CreateUIPanel("OccupiedContainer", card.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, Color.clear, raycastTarget: false);
+                slotOccupiedContainers[i] = occContainer;
+
                 // Avatar Box
-                var box = CreateUIPanel("AvatarBox", card.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 35), new Vector2(65, 65), new Color(0.18f, 0.22f, 0.32f));
+                var box = CreateUIPanel("AvatarBox", occContainer.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 35), new Vector2(65, 65), new Color(0.18f, 0.22f, 0.32f));
                 var boxIcon = CreateUIText("Icon", box.transform, "P", 32, FontStyles.Bold, TurnManager.PlayerColors[i], TextAlignmentOptions.Center);
                 SetRect(boxIcon.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero, new Vector2(65, 65));
 
+                // Crown Icon for Host
+                var crownObj = CreateUIText("CrownIcon", box.transform, "👑", 20, FontStyles.Bold, new Color(1f, 0.85f, 0.2f), TextAlignmentOptions.Center);
+                SetRect(crownObj.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, 10), new Vector2(30, 24));
+                slotCrownIcons[i] = crownObj.gameObject;
+                crownObj.gameObject.SetActive(i == 0);
+
                 // Player Name
-                var pName = CreateUIText("PlayerName", card.transform, (i == 0 ? "Host (Sen)" : "[BOŞ]"), 14, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
+                var pName = CreateUIText("PlayerName", occContainer.transform, (i == 0 ? "Host (Sen)" : "Boş Koltuk"), 14, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
                 SetRect(pName.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, -18), new Vector2(155, 26));
                 slotNames[i] = pName.GetComponent<TextMeshProUGUI>();
 
                 // Status
-                var pStatus = CreateUIText("Status", card.transform, (i == 0 ? "👑 LİDER" : "—"), 13, FontStyles.Normal, (i == 0 ? new Color(1f, 0.85f, 0.2f) : Color.gray), TextAlignmentOptions.Center);
+                var pStatus = CreateUIText("Status", occContainer.transform, (i == 0 ? "👑 LİDER [HAZIR]" : "—"), 13, FontStyles.Normal, (i == 0 ? new Color(1f, 0.85f, 0.2f) : Color.gray), TextAlignmentOptions.Center);
                 SetRect(pStatus.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, -44), new Vector2(155, 24));
                 slotStatuses[i] = pStatus.GetComponent<TextMeshProUGUI>();
 
-                // Interactive Slot Pick Button
-                var pickBtnObj = CreateStyledButton("SlotPickBtn", card.transform, "Koltuğa Geç", new Vector2(0, -78), new Vector2(145, 28), new Color(0.18f, 0.52f, 0.72f));
+                // Ready Badge
+                var readyBadge = CreateUIText("ReadyBadge", occContainer.transform, "✓ HAZIR", 12, FontStyles.Bold, new Color(0.2f, 0.9f, 0.4f), TextAlignmentOptions.Center);
+                SetRect(readyBadge.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, -68), new Vector2(155, 22));
+                slotReadyIcons[i] = readyBadge.gameObject;
+                readyBadge.gameObject.SetActive(i == 0);
+
+                occContainer.SetActive(i == 0);
+
+                // --- EMPTY CONTAINER ---
+                var emptyContainer = CreateUIPanel("EmptyContainer", card.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, Color.clear, raycastTarget: false);
+                slotEmptyContainers[i] = emptyContainer;
+
+                // Empty Avatar Box
+                var emptyBox = CreateUIPanel("EmptyAvatarBox", emptyContainer.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 35), new Vector2(65, 65), new Color(0.14f, 0.16f, 0.22f));
+                var emptyBoxIcon = CreateUIText("EmptyIcon", emptyBox.transform, "—", 28, FontStyles.Bold, new Color(0.45f, 0.5f, 0.6f), TextAlignmentOptions.Center);
+                SetRect(emptyBoxIcon.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero, new Vector2(65, 65));
+
+                var emptyLbl = CreateUIText("EmptyLabel", emptyContainer.transform, "Boş Koltuk", 14, FontStyles.Normal, new Color(0.6f, 0.65f, 0.75f), TextAlignmentOptions.Center);
+                SetRect(emptyLbl.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, -18), new Vector2(155, 26));
+
+                // Interactive Slot Pick Button inside EmptyContainer
+                var pickBtnObj = CreateStyledButton("SlotPickBtn", emptyContainer.transform, "Koltuğa Geç", new Vector2(0, -62), new Vector2(145, 32), new Color(0.18f, 0.52f, 0.72f));
                 slotPickButtons[i] = pickBtnObj.GetComponent<Button>();
-                pickBtnObj.SetActive(false);
+                pickBtnObj.SetActive(i != 0);
+
+                emptyContainer.SetActive(i != 0);
 
                 // Host Controls (only on slots 1, 2, 3)
                 if (i > 0)
@@ -1461,6 +1505,10 @@ namespace AncientTree.Editor
             SetFieldArray<Button>(lobbyCtrl, "_slotKickButtons", slotKickButtons);
             SetFieldArray<Button>(lobbyCtrl, "_slotAddBotButtons", slotAddBotButtons);
             SetFieldArray<Button>(lobbyCtrl, "_slotRemoveBotButtons", slotRemoveBotButtons);
+            SetFieldArray<GameObject>(lobbyCtrl, "_slotOccupiedContainers", slotOccupiedContainers);
+            SetFieldArray<GameObject>(lobbyCtrl, "_slotEmptyContainers", slotEmptyContainers);
+            SetFieldArray<GameObject>(lobbyCtrl, "_slotCrownIcons", slotCrownIcons);
+            SetFieldArray<GameObject>(lobbyCtrl, "_slotReadyIcons", slotReadyIcons);
 
             SetField(lobbyCtrl, "_countdownOverlay", countdownOverlay);
             SetField(lobbyCtrl, "_countdownText", cdTextObj.GetComponent<TextMeshProUGUI>());

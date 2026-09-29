@@ -30,10 +30,24 @@ namespace AncientTree.Network
 
         // Current Room State
         public RoomInfo CurrentRoom { get; private set; }
-        public bool IsHost => _networkManager != null && _networkManager.IsServerStarted;
+        private bool _isHostMode = false;
+        public bool IsHost => _isHostMode || (_networkManager != null && _networkManager.IsServerStarted);
         public bool IsClient => _networkManager != null && _networkManager.IsClientStarted;
         public bool IsOnline => IsHost || IsClient;
         public int LocalClientId => _networkManager != null && _networkManager.ClientManager != null ? _networkManager.ClientManager.Connection.ClientId : -1;
+        public int LocalPlayerSlotIndex
+        {
+            get
+            {
+                if (IsHost) return 0;
+                int myId = LocalClientId;
+                for (int i = 0; i < 4; i++)
+                {
+                    if (PlayerSlots[i].ClientId == myId) return i;
+                }
+                return -1;
+            }
+        }
 
         public NetworkPlayerSlotInfo[] PlayerSlots { get; } = new NetworkPlayerSlotInfo[4];
 
@@ -75,6 +89,12 @@ namespace AncientTree.Network
         private void Start()
         {
             RegisterFishNetEvents();
+
+            if (FogfieldNetworkDiscovery.Instance != null)
+            {
+                FogfieldNetworkDiscovery.Instance.OnServerDiscovered += HandleDiscoveryServerFound;
+                FogfieldNetworkDiscovery.Instance.OnServerLost += HandleDiscoveryServerLost;
+            }
         }
 
         private void RegisterFishNetEvents()
@@ -106,6 +126,12 @@ namespace AncientTree.Network
 
         private void OnDestroy()
         {
+            if (FogfieldNetworkDiscovery.Instance != null)
+            {
+                FogfieldNetworkDiscovery.Instance.OnServerDiscovered -= HandleDiscoveryServerFound;
+                FogfieldNetworkDiscovery.Instance.OnServerLost -= HandleDiscoveryServerLost;
+            }
+
             if (_networkManager != null)
             {
                 if (_networkManager.ServerManager != null)
@@ -128,11 +154,31 @@ namespace AncientTree.Network
             }
         }
 
+        private void HandleDiscoveryServerFound(RoomInfo room)
+        {
+            int idx = _discoveredRooms.FindIndex(r => r.RoomCode == room.RoomCode);
+            if (idx >= 0)
+            {
+                _discoveredRooms[idx] = room;
+            }
+            else
+            {
+                _discoveredRooms.Add(room);
+            }
+            OnRoomListUpdated?.Invoke(GetAvailableRooms());
+        }
+
+        private void HandleDiscoveryServerLost(string roomCode)
+        {
+            _discoveredRooms.RemoveAll(r => r.RoomCode == roomCode);
+            OnRoomListUpdated?.Invoke(GetAvailableRooms());
+        }
+
         private void ResetSlots()
         {
             for (int i = 0; i < 4; i++)
             {
-                PlayerSlots[i] = new NetworkPlayerSlotInfo(i, $"Oyuncu {i + 1}", -1, false, false);
+                PlayerSlots[i] = new NetworkPlayerSlotInfo(i, "Boş Koltuk", -1, false, false);
             }
         }
 
@@ -143,6 +189,10 @@ namespace AncientTree.Network
 
         public void RefreshRooms()
         {
+            if (!IsHost && FogfieldNetworkDiscovery.Instance != null)
+            {
+                FogfieldNetworkDiscovery.Instance.SearchForServers();
+            }
             OnRoomListUpdated?.Invoke(GetAvailableRooms());
         }
 
@@ -182,16 +232,33 @@ namespace AncientTree.Network
 
             if (serverStarted && clientStarted)
             {
+                _isHostMode = true;
                 string code = GenerateRoomCode();
-                CurrentRoom = new RoomInfo(Guid.NewGuid().ToString().Substring(0, 8), code, roomName, "127.0.0.1", port, 1, maxPlayers, targetScore, isPasswordProtected, password, 5);
+                string hostName = PlayerPrefs.GetString("PlayerName", "Host (Sen)");
+                if (string.IsNullOrEmpty(hostName)) hostName = "Host (Sen)";
+
+                CurrentRoom = new RoomInfo(Guid.NewGuid().ToString().Substring(0, 8), code, roomName, "127.0.0.1", port, 1, maxPlayers, targetScore, isPasswordProtected, password, 5, hostName);
 
                 ResetSlots();
-                // Host takes slot 0
-                PlayerSlots[0] = new NetworkPlayerSlotInfo(0, "Host (Sen)", 0, false, true);
+                int hostClientId = 0;
+                if (_networkManager != null && _networkManager.ClientManager != null && _networkManager.ClientManager.Connection != null)
+                {
+                    hostClientId = _networkManager.ClientManager.Connection.ClientId;
+                }
+                if (hostClientId < 0) hostClientId = 0;
+
+                // Host takes slot 0 explicitly - guaranteed occupied, ready, host
+                PlayerSlots[0] = new NetworkPlayerSlotInfo(0, hostName, hostClientId, true, true, isOccupied: true);
+
+                // Strictly initialize remaining slots as Empty
+                for (int i = 1; i < maxPlayers; i++)
+                {
+                    PlayerSlots[i] = new NetworkPlayerSlotInfo(i, "Boş Koltuk", -1, false, false, isOccupied: false);
+                }
                 // Mark unused slots beyond maxPlayers as Closed
                 for (int i = maxPlayers; i < 4; i++)
                 {
-                    PlayerSlots[i] = new NetworkPlayerSlotInfo(i, "[KAPALI]", -1, false, false);
+                    PlayerSlots[i] = new NetworkPlayerSlotInfo(i, "[KAPALI]", -1, false, false, isOccupied: false);
                 }
 
                 OnJoinedLobby?.Invoke();
@@ -201,6 +268,10 @@ namespace AncientTree.Network
                 _discoveredRooms.RemoveAll(r => r.Port == port);
                 _discoveredRooms.Insert(0, CurrentRoom);
                 OnRoomListUpdated?.Invoke(GetAvailableRooms());
+
+                // Broadcast room presence over LAN via NetworkDiscovery
+                FogfieldNetworkDiscovery.Instance?.AdvertiseServer(CurrentRoom, hostName);
+
                 return true;
             }
             else
@@ -271,6 +342,7 @@ namespace AncientTree.Network
             bool clientStarted = _networkManager.ClientManager.StartConnection();
             if (clientStarted)
             {
+                FogfieldNetworkDiscovery.Instance?.StopSearching();
                 string code = !string.IsNullOrEmpty(roomCode) ? roomCode : "ONLINE";
                 CurrentRoom = new RoomInfo("client_room", code, $"Oda [{code}]", address, port, 1, 4, 50, false, "", 20);
                 ResetSlots();
@@ -288,6 +360,15 @@ namespace AncientTree.Network
         // --- Leave / Disconnect ---
         public void LeaveRoom()
         {
+            if (IsHost)
+            {
+                FogfieldNetworkDiscovery.Instance?.StopAdvertisingServer();
+            }
+            else
+            {
+                FogfieldNetworkDiscovery.Instance?.StopSearching();
+            }
+
             if (_networkManager != null)
             {
                 if (IsHost)
@@ -313,7 +394,9 @@ namespace AncientTree.Network
             }
 
             _discoveredRooms.RemoveAll(r => r.RoomCode == CurrentRoom.RoomCode);
+            _isHostMode = false;
             ActivateNetworkControllers(false);
+            NetworkTurnManager.Instance?.SetOnlineMatchActive(false);
             ResetSlots();
             OnLeftLobby?.Invoke();
             OnRoomListUpdated?.Invoke(GetAvailableRooms());
@@ -321,6 +404,19 @@ namespace AncientTree.Network
 
         // --- Bot Management (Host Only) ---
         private static readonly string[] BotNames = new string[] { "Mekanik-1", "Kızıl Bot", "Orman Robotu", "Altın Bot" };
+
+        private void UpdateOccupiedPlayerCount()
+        {
+            int occupied = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                if (PlayerSlots[i].IsOccupied) occupied++;
+            }
+            var room = CurrentRoom;
+            room.CurrentPlayers = occupied;
+            CurrentRoom = room;
+            FogfieldNetworkDiscovery.Instance?.UpdateAdvertisedPlayerCount(occupied);
+        }
 
         public void AddBot(int slotIndex)
         {
@@ -331,6 +427,7 @@ namespace AncientTree.Network
             string bName = BotNames[(slotIndex - 1) % BotNames.Length];
             PlayerSlots[slotIndex] = new NetworkPlayerSlotInfo(slotIndex, bName, -2, true, false);
 
+            UpdateOccupiedPlayerCount();
             BroadcastLobbyState();
             OnPlayerSlotsChanged?.Invoke(PlayerSlots);
             CheckCountdownTrigger();
@@ -341,8 +438,9 @@ namespace AncientTree.Network
             if (!IsHost || slotIndex <= 0 || slotIndex >= 4) return;
             if (!PlayerSlots[slotIndex].IsBot) return;
 
-            PlayerSlots[slotIndex] = new NetworkPlayerSlotInfo(slotIndex, "[BOŞ]", -1, false, false);
+            PlayerSlots[slotIndex] = new NetworkPlayerSlotInfo(slotIndex, "Boş Koltuk", -1, false, false);
 
+            UpdateOccupiedPlayerCount();
             BroadcastLobbyState();
             OnPlayerSlotsChanged?.Invoke(PlayerSlots);
             CheckCountdownTrigger();
@@ -437,7 +535,8 @@ namespace AncientTree.Network
                 }
             }
 
-            PlayerSlots[slotIndex] = new NetworkPlayerSlotInfo(slotIndex, "[BOŞ]", -1, false, false);
+            PlayerSlots[slotIndex] = new NetworkPlayerSlotInfo(slotIndex, "Boş Koltuk", -1, false, false);
+            UpdateOccupiedPlayerCount();
             BroadcastLobbyState();
             OnPlayerSlotsChanged?.Invoke(PlayerSlots);
             CheckCountdownTrigger();
@@ -462,7 +561,7 @@ namespace AncientTree.Network
                 {
                     var old = PlayerSlots[curHostSlot];
                     PlayerSlots[targetSlotIndex] = new NetworkPlayerSlotInfo(targetSlotIndex, old.PlayerName, old.ClientId, old.IsReady, true);
-                    PlayerSlots[curHostSlot] = new NetworkPlayerSlotInfo(curHostSlot, "[BOŞ]", -1, false, false);
+                    PlayerSlots[curHostSlot] = new NetworkPlayerSlotInfo(curHostSlot, "Boş Koltuk", -1, false, false);
                     BroadcastLobbyState();
                     OnPlayerSlotsChanged?.Invoke(PlayerSlots);
                 }
@@ -574,6 +673,15 @@ namespace AncientTree.Network
             {
                 if (!IsHost) return;
 
+                // Guard against Host connection sending join request
+                int hostClientId = (_networkManager != null && _networkManager.ClientManager != null && _networkManager.ClientManager.Connection != null)
+                    ? _networkManager.ClientManager.Connection.ClientId
+                    : 0;
+                if (conn.ClientId == hostClientId)
+                {
+                    return;
+                }
+
                 // Password check
                 if (CurrentRoom.IsPasswordProtected)
                 {
@@ -616,6 +724,7 @@ namespace AncientTree.Network
                     }, false);
                 }
 
+                UpdateOccupiedPlayerCount();
                 BroadcastLobbyState();
                 OnPlayerSlotsChanged?.Invoke(PlayerSlots);
                 CheckCountdownTrigger();
@@ -650,7 +759,7 @@ namespace AncientTree.Network
                 {
                     var old = PlayerSlots[curSlot];
                     PlayerSlots[msg.TargetSlotIndex] = new NetworkPlayerSlotInfo(msg.TargetSlotIndex, old.PlayerName, old.ClientId, old.IsReady, false);
-                    PlayerSlots[curSlot] = new NetworkPlayerSlotInfo(curSlot, "[BOŞ]", -1, false, false);
+                    PlayerSlots[curSlot] = new NetworkPlayerSlotInfo(curSlot, "Boş Koltuk", -1, false, false);
                     BroadcastLobbyState();
                     OnPlayerSlotsChanged?.Invoke(PlayerSlots);
                 }
@@ -868,6 +977,9 @@ namespace AncientTree.Network
                     }
                     TurnManager.Instance.InitializeGame(slots);
                 }
+
+                // 6. Activate online state machine in NetworkTurnManager
+                NetworkTurnManager.Instance?.SetOnlineMatchActive(true);
             }
             catch (System.Exception ex)
             {
@@ -915,14 +1027,9 @@ namespace AncientTree.Network
             {
                 if (args.ConnectionState == RemoteConnectionState.Started)
                 {
-                    // If room has no password, assign slot immediately. If password protected, wait for ClientJoinRequestBroadcast
-                    if (!CurrentRoom.IsPasswordProtected)
-                    {
-                        AssignFirstAvailableSlot(conn.ClientId, $"Misafir #{conn.ClientId}");
-                        BroadcastLobbyState();
-                        OnPlayerSlotsChanged?.Invoke(PlayerSlots);
-                        CheckCountdownTrigger();
-                    }
+                    // Do NOT auto-assign slots here.
+                    // All clients (including passwordless) send explicit ClientJoinRequestBroadcast upon connecting.
+                    // This guarantees that the host's own local client connection is NEVER auto-assigned as a ghost guest.
                 }
                 else if (args.ConnectionState == RemoteConnectionState.Stopped)
                 {
@@ -931,10 +1038,11 @@ namespace AncientTree.Network
                     {
                         if (PlayerSlots[i].ClientId == conn.ClientId)
                         {
-                            PlayerSlots[i] = new NetworkPlayerSlotInfo(i, "[BOŞ]", -1, false, false);
+                            PlayerSlots[i] = new NetworkPlayerSlotInfo(i, "Boş Koltuk", -1, false, false);
                             break;
                         }
                     }
+                    UpdateOccupiedPlayerCount();
                     BroadcastLobbyState();
                     OnPlayerSlotsChanged?.Invoke(PlayerSlots);
                     CheckCountdownTrigger();
@@ -952,16 +1060,35 @@ namespace AncientTree.Network
             {
                 if (args.ConnectionState == LocalConnectionState.Started)
                 {
-                    if (!IsHost)
+                    if (IsHost)
+                    {
+                        // Ensure Host slot 0 has the valid local client ID and is authoritative
+                        int localId = (_networkManager != null && _networkManager.ClientManager != null && _networkManager.ClientManager.Connection != null)
+                            ? _networkManager.ClientManager.Connection.ClientId : 0;
+                        if (localId < 0) localId = 0;
+
+                        var hostSlot = PlayerSlots[0];
+                        hostSlot.ClientId = localId;
+                        hostSlot.IsOccupied = true;
+                        hostSlot.IsHost = true;
+                        hostSlot.IsReady = true;
+                        PlayerSlots[0] = hostSlot;
+
+                        BroadcastLobbyState();
+                        OnPlayerSlotsChanged?.Invoke(PlayerSlots);
+                    }
+                    else
                     {
                         // Send join request immediately
                         if (_networkManager != null && _networkManager.ClientManager != null)
                         {
+                            string pName = PlayerPrefs.GetString("PlayerName", "Misafir #" + LocalClientId);
+                            if (string.IsNullOrEmpty(pName)) pName = "Misafir #" + LocalClientId;
                             _networkManager.ClientManager.Broadcast(new ClientJoinRequestBroadcast
                             {
                                 RoomCode = _pendingRoomCode,
                                 Password = _pendingPassword,
-                                PlayerName = "Misafir #" + LocalClientId
+                                PlayerName = pName
                             });
                         }
                         // Client awaits authoritative LobbyStateBroadcast from server before setting local slot display
@@ -969,6 +1096,7 @@ namespace AncientTree.Network
                 }
                 else if (args.ConnectionState == LocalConnectionState.Stopped)
                 {
+                    _isHostMode = false;
                     if (!IsHost)
                     {
                         ResetSlots();

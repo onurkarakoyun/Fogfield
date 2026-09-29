@@ -72,6 +72,12 @@ namespace AncientTree.UI
         [SerializeField] private Button _startMatchButton;
         [SerializeField] private Button _leaveLobbyButton;
 
+        [Header("Slot Visibility Containers")]
+        [SerializeField] private GameObject[] _slotOccupiedContainers = new GameObject[4];
+        [SerializeField] private GameObject[] _slotEmptyContainers = new GameObject[4];
+        [SerializeField] private GameObject[] _slotCrownIcons = new GameObject[4];
+        [SerializeField] private GameObject[] _slotReadyIcons = new GameObject[4];
+
         [Header("Synchronized Countdown Overlay")]
         [SerializeField] private GameObject _countdownOverlay;
         [SerializeField] private TextMeshProUGUI _countdownText;
@@ -109,6 +115,79 @@ namespace AncientTree.UI
             if (_stagingLobbyPanel != null) _stagingLobbyPanel.SetActive(false);
             if (_lobbyToast != null) _lobbyToast.SetActive(false);
             if (_countdownOverlay != null) _countdownOverlay.SetActive(false);
+            ResetAllSlotsUI();
+        }
+
+        private void OnEnable()
+        {
+            if (_stagingLobbyPanel != null && _stagingLobbyPanel.activeSelf)
+            {
+                RefreshAllSlotsUI();
+            }
+        }
+
+        public void RefreshAllSlotsUI()
+        {
+            if (FogfieldNetworkManager.Instance != null)
+            {
+                UpdateStagingSlots(FogfieldNetworkManager.Instance.PlayerSlots);
+            }
+        }
+
+        public void ResetAllSlotsUI()
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                if (_slotOccupiedContainers != null && i < _slotOccupiedContainers.Length && _slotOccupiedContainers[i] != null)
+                {
+                    _slotOccupiedContainers[i].SetActive(i == 0);
+                }
+                if (_slotEmptyContainers != null && i < _slotEmptyContainers.Length && _slotEmptyContainers[i] != null)
+                {
+                    _slotEmptyContainers[i].SetActive(i != 0);
+                }
+                if (_slotCrownIcons != null && i < _slotCrownIcons.Length && _slotCrownIcons[i] != null)
+                {
+                    _slotCrownIcons[i].SetActive(i == 0);
+                }
+                if (_slotReadyIcons != null && i < _slotReadyIcons.Length && _slotReadyIcons[i] != null)
+                {
+                    _slotReadyIcons[i].SetActive(i == 0);
+                }
+                if (_slotPickButtons != null && i < _slotPickButtons.Length && _slotPickButtons[i] != null)
+                {
+                    _slotPickButtons[i].gameObject.SetActive(i != 0);
+                }
+            }
+
+            if (_slotNameTexts != null)
+            {
+                if (_slotNameTexts.Length > 0 && _slotNameTexts[0] != null) _slotNameTexts[0].text = "Host (Sen)";
+                for (int i = 1; i < _slotNameTexts.Length; i++)
+                {
+                    if (_slotNameTexts[i] != null) _slotNameTexts[i].text = "Boş Koltuk";
+                }
+            }
+            if (_slotStatusTexts != null)
+            {
+                if (_slotStatusTexts.Length > 0 && _slotStatusTexts[0] != null)
+                {
+                    _slotStatusTexts[0].text = "👑 LİDER [HAZIR]";
+                    _slotStatusTexts[0].color = new Color(1f, 0.85f, 0.2f);
+                }
+                for (int i = 1; i < _slotStatusTexts.Length; i++)
+                {
+                    if (_slotStatusTexts[i] != null)
+                    {
+                        _slotStatusTexts[i].text = "—";
+                        _slotStatusTexts[i].color = new Color(0.5f, 0.5f, 0.5f);
+                    }
+                }
+            }
+            if (_lobbyStatusText != null)
+            {
+                _lobbyStatusText.text = "Oyuncular Bekleniyor (1/4)";
+            }
         }
 
         private void Start()
@@ -170,6 +249,7 @@ namespace AncientTree.UI
             _refreshRoomsButton?.onClick.AddListener(() =>
             {
                 AudioManager.Instance?.PlayClick();
+                FogfieldNetworkDiscovery.Instance?.SearchForServers();
                 FogfieldNetworkManager.Instance?.RefreshRooms();
             });
 
@@ -474,12 +554,16 @@ namespace AncientTree.UI
                 _lobbyCanvasGroup.DOFade(1f, 0.25f);
             }
 
+            ResetAllSlotsUI();
             ShowPanel(_roomBrowserPanel);
+            FogfieldNetworkDiscovery.Instance?.SearchForServers();
             FogfieldNetworkManager.Instance?.RefreshRooms();
         }
 
         public void CloseLobby()
         {
+            FogfieldNetworkDiscovery.Instance?.StopSearching();
+
             if (_lobbyCanvasGroup != null)
             {
                 _lobbyCanvasGroup.DOFade(0f, 0.2f).OnComplete(() =>
@@ -574,47 +658,48 @@ namespace AncientTree.UI
             outline.effectColor = new Color(0.25f, 0.35f, 0.45f, 0.6f);
             outline.effectDistance = new Vector2(1, -1);
 
-            // Name text with lock badge if password protected (Pure Code, No IP display)
+            // Left: Room Name & Host Name, Room Code (Pure Code, No IP display)
             var nameObj = new GameObject("NameText");
             nameObj.transform.SetParent(row.transform, false);
             var nameRt = nameObj.AddComponent<RectTransform>();
             nameRt.anchorMin = new Vector2(0f, 0.5f);
             nameRt.anchorMax = new Vector2(0f, 0.5f);
-            nameRt.anchoredPosition = new Vector2(175, 0);
-            nameRt.sizeDelta = new Vector2(310, 40);
+            nameRt.anchoredPosition = new Vector2(210, 0);
+            nameRt.sizeDelta = new Vector2(390, 42);
             var nameTmp = nameObj.AddComponent<TextMeshProUGUI>();
-            string lockTag = room.IsPasswordProtected ? "[KİLİTLİ 🔒] " : "";
-            nameTmp.text = $"{lockTag}{room.RoomName}  [KOD: {room.RoomCode}]  ({room.TargetScore}P)";
-            nameTmp.fontSize = 15.5f;
-            nameTmp.fontStyle = FontStyles.Bold;
-            nameTmp.color = room.IsPasswordProtected ? new Color(1f, 0.85f, 0.3f) : Color.white;
+            string lockTag = room.IsPasswordProtected ? "<color=#FFD700>[KİLİTLİ 🔒]</color> " : "";
+            string hostStr = !string.IsNullOrEmpty(room.HostName) ? $" <size=12><color=#A0B0C0>({room.HostName})</color></size>" : "";
+            nameTmp.text = $"{lockTag}<b>{room.RoomName}</b>{hostStr}  <size=12><color=#60A5FA>[{room.RoomCode}]</color></size>  <size=12><color=#FBBF24>({room.TargetScore}P)</color></size>";
+            nameTmp.fontSize = 15f;
+            nameTmp.color = Color.white;
             nameTmp.alignment = TextAlignmentOptions.MidlineLeft;
 
             // Player count badge
             var countObj = new GameObject("CountText");
             countObj.transform.SetParent(row.transform, false);
             var countRt = countObj.AddComponent<RectTransform>();
-            countRt.anchorMin = new Vector2(0.62f, 0.5f);
-            countRt.anchorMax = new Vector2(0.62f, 0.5f);
+            countRt.anchorMin = new Vector2(0.66f, 0.5f);
+            countRt.anchorMax = new Vector2(0.66f, 0.5f);
             countRt.anchoredPosition = Vector2.zero;
-            countRt.sizeDelta = new Vector2(100, 40);
+            countRt.sizeDelta = new Vector2(90, 40);
             var countTmp = countObj.AddComponent<TextMeshProUGUI>();
-            countTmp.text = $"{room.CurrentPlayers}/{room.MaxPlayers}";
+            countTmp.text = $"👤 {room.CurrentPlayers}/{room.MaxPlayers}";
             countTmp.fontSize = 15;
-            countTmp.color = new Color(0.3f, 0.85f, 1f);
+            countTmp.fontStyle = FontStyles.Bold;
+            countTmp.color = (room.CurrentPlayers >= room.MaxPlayers) ? new Color(1f, 0.4f, 0.4f) : new Color(0.3f, 0.85f, 1f);
             countTmp.alignment = TextAlignmentOptions.Center;
 
             // Ping badge
             var pingObj = new GameObject("PingText");
             pingObj.transform.SetParent(row.transform, false);
             var pingRt = pingObj.AddComponent<RectTransform>();
-            pingRt.anchorMin = new Vector2(0.79f, 0.5f);
-            pingRt.anchorMax = new Vector2(0.79f, 0.5f);
+            pingRt.anchorMin = new Vector2(0.81f, 0.5f);
+            pingRt.anchorMax = new Vector2(0.81f, 0.5f);
             pingRt.anchoredPosition = Vector2.zero;
-            pingRt.sizeDelta = new Vector2(80, 40);
+            pingRt.sizeDelta = new Vector2(70, 40);
             var pingTmp = pingObj.AddComponent<TextMeshProUGUI>();
             pingTmp.text = $"{room.PingMs}ms";
-            pingTmp.fontSize = 14;
+            pingTmp.fontSize = 13.5f;
             pingTmp.color = new Color(0.4f, 0.95f, 0.4f);
             pingTmp.alignment = TextAlignmentOptions.Center;
 
@@ -625,10 +710,10 @@ namespace AncientTree.UI
             joinRt.anchorMin = new Vector2(1f, 0.5f);
             joinRt.anchorMax = new Vector2(1f, 0.5f);
             joinRt.anchoredPosition = new Vector2(-60, 0);
-            joinRt.sizeDelta = new Vector2(95, 36);
+            joinRt.sizeDelta = new Vector2(100, 36);
 
             var joinImg = joinBtnObj.AddComponent<Image>();
-            joinImg.color = room.IsPasswordProtected ? new Color(0.75f, 0.45f, 0.15f) : new Color(0.18f, 0.55f, 0.35f);
+            joinImg.color = room.IsPasswordProtected ? new Color(0.85f, 0.55f, 0.15f) : new Color(0.18f, 0.65f, 0.35f);
             var joinBtn = joinBtnObj.AddComponent<Button>();
 
             var joinTxtObj = new GameObject("Text");
@@ -668,7 +753,8 @@ namespace AncientTree.UI
         private void HandleJoinedLobby()
         {
             ShowPanel(_stagingLobbyPanel);
-            _isLocalReady = false;
+            bool isHost = FogfieldNetworkManager.Instance != null && FogfieldNetworkManager.Instance.IsHost;
+            _isLocalReady = isHost;
             UpdateReadyButtonVisual();
 
             if (_stagingRoomTitleText != null && FogfieldNetworkManager.Instance != null)
@@ -678,7 +764,7 @@ namespace AncientTree.UI
                 _stagingRoomTitleText.text = $"{lockTag}ODA: {cur.RoomName}  |  KOD: {cur.RoomCode}  |  Hedef: {cur.TargetScore}P";
             }
 
-            UpdateStagingSlots(FogfieldNetworkManager.Instance?.PlayerSlots);
+            RefreshAllSlotsUI();
         }
 
         private void HandleLeftLobby()
@@ -703,70 +789,103 @@ namespace AncientTree.UI
                 var slot = slots[i];
                 bool isClosed = i >= maxP;
 
-                if (_slotNameTexts != null && i < _slotNameTexts.Length && _slotNameTexts[i] != null)
+                if (isClosed)
                 {
-                    if (isClosed)
+                    if (_slotOccupiedContainers != null && i < _slotOccupiedContainers.Length && _slotOccupiedContainers[i] != null)
+                        _slotOccupiedContainers[i].SetActive(false);
+                    if (_slotEmptyContainers != null && i < _slotEmptyContainers.Length && _slotEmptyContainers[i] != null)
+                        _slotEmptyContainers[i].SetActive(false);
+                    if (_slotPickButtons != null && i < _slotPickButtons.Length && _slotPickButtons[i] != null)
+                        _slotPickButtons[i].gameObject.SetActive(false);
+                    if (_slotNameTexts != null && i < _slotNameTexts.Length && _slotNameTexts[i] != null)
                         _slotNameTexts[i].text = "[KAPALI]";
-                    else if (slot.IsBot)
-                        _slotNameTexts[i].text = $"[BOT] {slot.PlayerName}";
-                    else
-                        _slotNameTexts[i].text = slot.IsOccupied ? slot.PlayerName : "Boş Koltuk";
-                }
-
-                if (_slotStatusTexts != null && i < _slotStatusTexts.Length && _slotStatusTexts[i] != null)
-                {
-                    if (isClosed)
+                    if (_slotStatusTexts != null && i < _slotStatusTexts.Length && _slotStatusTexts[i] != null)
                     {
                         _slotStatusTexts[i].text = "—";
                         _slotStatusTexts[i].color = new Color(0.4f, 0.4f, 0.4f);
                     }
-                    else if (!slot.IsOccupied)
+                    if (_slotCrownIcons != null && i < _slotCrownIcons.Length && _slotCrownIcons[i] != null)
+                        _slotCrownIcons[i].SetActive(false);
+                    if (_slotReadyIcons != null && i < _slotReadyIcons.Length && _slotReadyIcons[i] != null)
+                        _slotReadyIcons[i].SetActive(false);
+                    if (_slotKickButtons != null && i < _slotKickButtons.Length && _slotKickButtons[i] != null)
+                        _slotKickButtons[i].gameObject.SetActive(false);
+                    if (_slotAddBotButtons != null && i < _slotAddBotButtons.Length && _slotAddBotButtons[i] != null)
+                        _slotAddBotButtons[i].gameObject.SetActive(false);
+                    if (_slotRemoveBotButtons != null && i < _slotRemoveBotButtons.Length && _slotRemoveBotButtons[i] != null)
+                        _slotRemoveBotButtons[i].gameObject.SetActive(false);
+                    continue;
+                }
+
+                if (slot.IsOccupied)
+                {
+                    if (_slotEmptyContainers != null && i < _slotEmptyContainers.Length && _slotEmptyContainers[i] != null)
+                        _slotEmptyContainers[i].SetActive(false);
+                    if (_slotOccupiedContainers != null && i < _slotOccupiedContainers.Length && _slotOccupiedContainers[i] != null)
+                        _slotOccupiedContainers[i].SetActive(true);
+
+                    if (_slotPickButtons != null && i < _slotPickButtons.Length && _slotPickButtons[i] != null)
+                        _slotPickButtons[i].gameObject.SetActive(false);
+
+                    string pName = !string.IsNullOrEmpty(slot.PlayerName) ? slot.PlayerName : (slot.IsHost ? "Host (Sen)" : $"Oyuncu {i + 1}");
+                    if (slot.IsBot) pName = $"[BOT] {slot.PlayerName}";
+                    if (_slotNameTexts != null && i < _slotNameTexts.Length && _slotNameTexts[i] != null)
+                        _slotNameTexts[i].text = pName;
+
+                    if (_slotCrownIcons != null && i < _slotCrownIcons.Length && _slotCrownIcons[i] != null)
+                        _slotCrownIcons[i].SetActive(slot.IsHost);
+                    if (_slotReadyIcons != null && i < _slotReadyIcons.Length && _slotReadyIcons[i] != null)
+                        _slotReadyIcons[i].SetActive(slot.IsReady);
+
+                    if (_slotStatusTexts != null && i < _slotStatusTexts.Length && _slotStatusTexts[i] != null)
+                    {
+                        if (slot.IsBot)
+                        {
+                            _slotStatusTexts[i].text = "BOT [HAZIR]";
+                            _slotStatusTexts[i].color = new Color(0.2f, 0.9f, 0.4f);
+                        }
+                        else if (slot.IsHost)
+                        {
+                            _slotStatusTexts[i].text = "👑 LİDER [HAZIR]";
+                            _slotStatusTexts[i].color = new Color(1f, 0.85f, 0.2f);
+                        }
+                        else if (slot.IsReady)
+                        {
+                            _slotStatusTexts[i].text = "HAZIR";
+                            _slotStatusTexts[i].color = new Color(0.2f, 0.9f, 0.4f);
+                        }
+                        else
+                        {
+                            _slotStatusTexts[i].text = "BEKLİYOR";
+                            _slotStatusTexts[i].color = new Color(0.9f, 0.4f, 0.4f);
+                        }
+                    }
+
+                    occupiedCount++;
+                    if (slot.IsReady || slot.IsHost || slot.IsBot) readyCount++;
+                }
+                else
+                {
+                    if (_slotOccupiedContainers != null && i < _slotOccupiedContainers.Length && _slotOccupiedContainers[i] != null)
+                        _slotOccupiedContainers[i].SetActive(false);
+                    if (_slotEmptyContainers != null && i < _slotEmptyContainers.Length && _slotEmptyContainers[i] != null)
+                        _slotEmptyContainers[i].SetActive(true);
+
+                    if (_slotCrownIcons != null && i < _slotCrownIcons.Length && _slotCrownIcons[i] != null)
+                        _slotCrownIcons[i].SetActive(false);
+                    if (_slotReadyIcons != null && i < _slotReadyIcons.Length && _slotReadyIcons[i] != null)
+                        _slotReadyIcons[i].SetActive(false);
+
+                    if (_slotPickButtons != null && i < _slotPickButtons.Length && _slotPickButtons[i] != null)
+                        _slotPickButtons[i].gameObject.SetActive(true);
+
+                    if (_slotNameTexts != null && i < _slotNameTexts.Length && _slotNameTexts[i] != null)
+                        _slotNameTexts[i].text = "Boş Koltuk";
+                    if (_slotStatusTexts != null && i < _slotStatusTexts.Length && _slotStatusTexts[i] != null)
                     {
                         _slotStatusTexts[i].text = "—";
                         _slotStatusTexts[i].color = new Color(0.5f, 0.5f, 0.5f);
                     }
-                    else if (slot.IsBot)
-                    {
-                        _slotStatusTexts[i].text = "BOT [HAZIR]";
-                        _slotStatusTexts[i].color = new Color(0.2f, 0.9f, 0.4f);
-                        readyCount++;
-                        occupiedCount++;
-                    }
-                    else if (slot.IsHost)
-                    {
-                        if (slot.IsReady)
-                        {
-                            _slotStatusTexts[i].text = "LİDER [HAZIR]";
-                            _slotStatusTexts[i].color = new Color(0.2f, 0.9f, 0.4f);
-                            readyCount++;
-                        }
-                        else
-                        {
-                            _slotStatusTexts[i].text = "LİDER [BEKLİYOR]";
-                            _slotStatusTexts[i].color = new Color(1f, 0.85f, 0.2f);
-                        }
-                        occupiedCount++;
-                    }
-                    else if (slot.IsReady)
-                    {
-                        _slotStatusTexts[i].text = "HAZIR";
-                        _slotStatusTexts[i].color = new Color(0.2f, 0.9f, 0.4f);
-                        readyCount++;
-                        occupiedCount++;
-                    }
-                    else
-                    {
-                        _slotStatusTexts[i].text = "BEKLİYOR";
-                        _slotStatusTexts[i].color = new Color(0.9f, 0.4f, 0.4f);
-                        occupiedCount++;
-                    }
-                }
-
-                // Interactive Slot Pick Button
-                if (_slotPickButtons != null && i < _slotPickButtons.Length && _slotPickButtons[i] != null)
-                {
-                    bool canPick = !isClosed && !slot.IsOccupied;
-                    _slotPickButtons[i].gameObject.SetActive(canPick);
                 }
 
                 // Host Kick Button (only slots 1, 2, 3 and human occupied)

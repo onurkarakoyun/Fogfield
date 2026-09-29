@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -26,6 +27,10 @@ namespace AncientTree.UI
         [SerializeField] private TextMeshProUGUI _diceResultText;
         [SerializeField] private TextMeshProUGUI _remainingHpText;
         [SerializeField] private DiceAnimationController _diceAnimationController;
+
+        [Header("Bottom Action Bar")]
+        [SerializeField] private GameObject _bottomBar;
+        [SerializeField] private CanvasGroup _bottomBarCanvasGroup;
 
         [Header("Settlement & Turn Actions")]
         [SerializeField] private TextMeshProUGUI _settlementCounterText;
@@ -62,6 +67,7 @@ namespace AncientTree.UI
         private readonly List<ScoreRowUI> _scoreRows = new List<ScoreRowUI>();
         private Tween _alertTween;
         private Tween _diceShakeTween;
+        private Coroutine _diceWatchdogCoroutine;
 
         private class ScoreRowUI
         {
@@ -130,6 +136,8 @@ namespace AncientTree.UI
             {
                 // Prevent double clicking / spamming immediately
                 if (_rollDiceButton != null) _rollDiceButton.interactable = false;
+                if (_diceWatchdogCoroutine != null) StopCoroutine(_diceWatchdogCoroutine);
+                _diceWatchdogCoroutine = StartCoroutine(DiceSafetyWatchdog());
                 TurnManager.Instance?.RollDice();
             });
 
@@ -249,8 +257,39 @@ namespace AncientTree.UI
             if (_playerColorBanner != null) _playerColorBanner.color = playerColor;
             if (_playerTurnText != null)
             {
-                string format = LocalizationManager.Instance?.Get("PLAYER_TURN_FORMAT") ?? "{0}'in Sırası";
-                _playerTurnText.text = string.Format(format, playerName);
+                bool isOnline = AncientTree.Network.FogfieldNetworkManager.Instance != null &&
+                                AncientTree.Network.FogfieldNetworkManager.Instance.IsOnline;
+                int localSlot = isOnline ? AncientTree.Network.FogfieldNetworkManager.Instance.LocalPlayerSlotIndex : playerIndex;
+                bool isMyTurn = !isOnline || (playerIndex == localSlot);
+
+                if (isOnline)
+                {
+                    if (isMyTurn)
+                    {
+                        _playerTurnText.text = "Senin Sıran! Zarı At";
+                        _playerTurnText.color = new Color(0.18f, 0.95f, 0.45f);
+                        _playerTurnText.transform.DOPunchScale(Vector3.one * 0.15f, 0.3f).SetLink(_playerTurnText.gameObject);
+                    }
+                    else
+                    {
+                        _playerTurnText.text = $"[{playerName}]'in Sırası Bekleniyor...";
+                        _playerTurnText.color = new Color(0.75f, 0.8f, 0.9f, 0.85f);
+                    }
+                }
+                else
+                {
+                    if (TurnManager.Instance != null && TurnManager.Instance.ActivePlayer != null && TurnManager.Instance.ActivePlayer.IsBot)
+                    {
+                        _playerTurnText.text = $"[{playerName}] (Bot) Oynuyor...";
+                        _playerTurnText.color = new Color(0.75f, 0.8f, 0.9f, 0.85f);
+                    }
+                    else
+                    {
+                        string format = LocalizationManager.Instance?.Get("PLAYER_TURN_FORMAT") ?? "{0}'in Sırası";
+                        _playerTurnText.text = string.Format(format, playerName);
+                        _playerTurnText.color = Color.white;
+                    }
+                }
             }
 
             if (_diceResultText != null) _diceResultText.text = "-";
@@ -289,6 +328,12 @@ namespace AncientTree.UI
 
         private void HandleDiceRollAnimationStarted(int targetValue, int playerIndex)
         {
+            if (_diceWatchdogCoroutine != null)
+            {
+                StopCoroutine(_diceWatchdogCoroutine);
+                _diceWatchdogCoroutine = null;
+            }
+
             if (_rollDiceButton != null) _rollDiceButton.interactable = false;
 
             var diceAnim = _diceAnimationController ?? DiceAnimationController.Instance;
@@ -305,6 +350,15 @@ namespace AncientTree.UI
                 {
                     TurnManager.Instance?.CompleteDiceRoll(targetValue);
                 });
+            }
+        }
+
+        private IEnumerator DiceSafetyWatchdog()
+        {
+            yield return new WaitForSeconds(2.0f);
+            if (TurnManager.Instance != null && TurnManager.Instance.CurrentPhase == TurnPhase.WaitingForRoll)
+            {
+                UpdateActionButtons();
             }
         }
 
@@ -469,7 +523,26 @@ namespace AncientTree.UI
             if (TurnManager.Instance == null) return;
 
             var activePlayer = TurnManager.Instance.ActivePlayer;
-            if (activePlayer != null && activePlayer.IsBot)
+            int activeIndex = TurnManager.Instance.ActivePlayerIndex;
+
+            bool isOnline = AncientTree.Network.FogfieldNetworkManager.Instance != null &&
+                            AncientTree.Network.FogfieldNetworkManager.Instance.IsOnline;
+            int localSlot = isOnline ? AncientTree.Network.FogfieldNetworkManager.Instance.LocalPlayerSlotIndex : activeIndex;
+            bool isMyTurn = !isOnline || (activeIndex == localSlot);
+            bool showBottomBar = isMyTurn && (activePlayer == null || !activePlayer.IsBot);
+
+            if (_bottomBarCanvasGroup != null)
+            {
+                _bottomBarCanvasGroup.alpha = showBottomBar ? 1f : 0f;
+                _bottomBarCanvasGroup.interactable = showBottomBar;
+                _bottomBarCanvasGroup.blocksRaycasts = showBottomBar;
+            }
+            if (_bottomBar != null)
+            {
+                _bottomBar.SetActive(showBottomBar);
+            }
+
+            if (!showBottomBar)
             {
                 if (_rollDiceButton != null) _rollDiceButton.interactable = false;
                 if (_buildSettlementButton != null) _buildSettlementButton.interactable = false;
@@ -481,7 +554,6 @@ namespace AncientTree.UI
             var phase = TurnManager.Instance.CurrentPhase;
             bool isWaitingForRoll = phase == TurnPhase.WaitingForRoll;
             bool isActionSelection = phase == TurnPhase.ActionSelection;
-            int activeIndex = TurnManager.Instance.ActivePlayerIndex;
             bool isLocked = TurnManager.Instance.IsActionLocked;
 
             if (_rollDiceButton != null)

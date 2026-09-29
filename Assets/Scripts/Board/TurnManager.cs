@@ -38,6 +38,11 @@ namespace AncientTree.Board
         public bool IsActionLocked => _isActionLocked;
         public bool IsRelocating => _isRelocating;
 
+        public bool IsOnline => AncientTree.Network.FogfieldNetworkManager.Instance != null &&
+                                AncientTree.Network.FogfieldNetworkManager.Instance.IsOnline &&
+                                AncientTree.Network.NetworkTurnManager.Instance != null &&
+                                AncientTree.Network.NetworkTurnManager.Instance.IsOnlineMatchActive;
+
         public void TriggerBotTurn()
         {
             if (_botTurnCoroutine != null) StopCoroutine(_botTurnCoroutine);
@@ -231,6 +236,23 @@ namespace AncientTree.Board
             if (GameManager.Instance != null && GameManager.Instance.CurrentState != GameState.Gameplay) return;
             if (_currentPhase != TurnPhase.WaitingForRoll || _isActionLocked) return;
 
+            if (IsOnline)
+            {
+                var netMgr = AncientTree.Network.FogfieldNetworkManager.Instance;
+                bool isHost = netMgr != null && netMgr.IsHost;
+                int localSlot = netMgr != null ? netMgr.LocalPlayerSlotIndex : -1;
+                bool isMyTurn = (_activePlayerIndex == localSlot);
+                bool isHostBot = isHost && (ActivePlayer != null && ActivePlayer.IsBot);
+
+                if (!isMyTurn && !isHostBot) return;
+
+                if (AncientTree.Network.NetworkTurnManager.Instance != null)
+                {
+                    AncientTree.Network.NetworkTurnManager.Instance.CmdRequestDiceRoll(_activePlayerIndex);
+                    return;
+                }
+            }
+
             _isActionLocked = true;
             _currentPhase = TurnPhase.Rolling;
             GameEvents.TriggerTurnPhaseChanged(_currentPhase);
@@ -243,6 +265,20 @@ namespace AncientTree.Board
             _diceSafetyCoroutine = StartCoroutine(SafetyDiceRollTimeout(_lastDiceRoll, 1.5f));
 
             GameEvents.TriggerDiceRollAnimationStarted(_lastDiceRoll, _activePlayerIndex);
+        }
+
+        public void ExecuteNetworkDiceRoll(int rolledValue, int playerIndex)
+        {
+            _activePlayerIndex = playerIndex;
+            _lastDiceRoll = rolledValue;
+            _isActionLocked = true;
+            _currentPhase = TurnPhase.Rolling;
+            GameEvents.TriggerTurnPhaseChanged(_currentPhase);
+
+            if (_diceSafetyCoroutine != null) StopCoroutine(_diceSafetyCoroutine);
+            _diceSafetyCoroutine = StartCoroutine(SafetyDiceRollTimeout(rolledValue, 1.5f));
+
+            GameEvents.TriggerDiceRollAnimationStarted(rolledValue, playerIndex);
         }
 
         private IEnumerator SafetyDiceRollTimeout(int rolledValue, float timeoutSeconds)
@@ -280,7 +316,18 @@ namespace AncientTree.Board
             {
                 _currentPhase = TurnPhase.Moving;
                 _isActionLocked = false;
-                HighlightReachableNeighbors();
+
+                bool isLocalTurn = !IsOnline ||
+                                   (AncientTree.Network.FogfieldNetworkManager.Instance != null &&
+                                    AncientTree.Network.FogfieldNetworkManager.Instance.LocalPlayerSlotIndex == _activePlayerIndex);
+                if (isLocalTurn)
+                {
+                    HighlightReachableNeighbors();
+                }
+                else
+                {
+                    ClearAllTileHighlights();
+                }
             }
             else
             {
@@ -299,6 +346,23 @@ namespace AncientTree.Board
             if (AncientTree.UI.PauseManager.Instance != null && AncientTree.UI.PauseManager.Instance.IsPaused) return;
             if (clickedTile == null || _isActionLocked) return;
 
+            if (IsOnline)
+            {
+                var netMgr = AncientTree.Network.FogfieldNetworkManager.Instance;
+                bool isHost = netMgr != null && netMgr.IsHost;
+                int localSlot = netMgr != null ? netMgr.LocalPlayerSlotIndex : -1;
+                bool isMyTurn = (_activePlayerIndex == localSlot);
+                bool isHostBot = isHost && (ActivePlayer != null && ActivePlayer.IsBot);
+
+                if (!isMyTurn && !isHostBot) return;
+
+                if (_currentPhase == TurnPhase.Moving && _remainingMovementPoints > 0)
+                {
+                    AncientTree.Network.NetworkTurnManager.Instance?.CmdRequestTileClick(clickedTile.GridCoords.x, clickedTile.GridCoords.y, _activePlayerIndex);
+                    return;
+                }
+            }
+
             // Relocation mode: player clicks one of their old settlements to dismantle and place onto their current tile
             if (_isRelocating)
             {
@@ -306,11 +370,90 @@ namespace AncientTree.Board
                 return;
             }
 
-            // During Moving Phase
+            // During Moving Phase (offline)
             if (_currentPhase == TurnPhase.Moving && _remainingMovementPoints > 0)
             {
                 HandleMovementClick(clickedTile);
                 return;
+            }
+        }
+
+        public void ExecuteNetworkMove(Vector2Int from, Vector2Int to, int playerIndex, bool wasFogged, TileType tileType, bool isMountain, int newRemainingSteps)
+        {
+            var pawn = GetPawn(playerIndex);
+            var player = GetPlayer(playerIndex);
+            var tile = _mapGenerator != null ? _mapGenerator.GetTile(to) : null;
+            if (pawn == null || player == null || tile == null) return;
+
+            _isActionLocked = true;
+            ClearAllTileHighlights();
+
+            Vector3 originalPos = pawn.transform.position;
+            Vector3 targetStandPos = tile.GetPawnStandPosition();
+            if (to == MapGenerator.CenterCoords)
+            {
+                targetStandPos += GetPawnCenterOffset(playerIndex, _playerCount);
+            }
+
+            if (wasFogged)
+            {
+                tile.RevealTile(immediate: false, onComplete: () =>
+                {
+                    if (isMountain)
+                    {
+                        pawn.MountainBounceBack(targetStandPos, originalPos, () =>
+                        {
+                            GameEvents.TriggerMountainHit(to, playerIndex);
+                            FinishNetworkStep(newRemainingSteps, playerIndex);
+                        });
+                    }
+                    else
+                    {
+                        pawn.MoveToTile(to, targetStandPos, () =>
+                        {
+                            player.CurrentCoordinates = to;
+                            GameEvents.TriggerPawnMoved(playerIndex, from, to);
+                            FinishNetworkStep(newRemainingSteps, playerIndex);
+                        });
+                    }
+                });
+            }
+            else
+            {
+                pawn.MoveToTile(to, targetStandPos, () =>
+                {
+                    player.CurrentCoordinates = to;
+                    GameEvents.TriggerPawnMoved(playerIndex, from, to);
+                    FinishNetworkStep(newRemainingSteps, playerIndex);
+                });
+            }
+        }
+
+        private void FinishNetworkStep(int newRemainingSteps, int playerIndex)
+        {
+            _remainingMovementPoints = newRemainingSteps;
+            GameEvents.TriggerMovementPointsChanged(_remainingMovementPoints);
+            _isActionLocked = false;
+
+            if (_remainingMovementPoints <= 0 || !HasReachableNeighbors())
+            {
+                _currentPhase = TurnPhase.ActionSelection;
+                GameEvents.TriggerTurnPhaseChanged(_currentPhase);
+                ClearAllTileHighlights();
+            }
+            else
+            {
+                bool isLocalTurn = !IsOnline ||
+                                   (AncientTree.Network.FogfieldNetworkManager.Instance != null &&
+                                    AncientTree.Network.FogfieldNetworkManager.Instance.LocalPlayerSlotIndex == playerIndex);
+                if (isLocalTurn)
+                {
+                    HighlightReachableNeighbors();
+                }
+                else
+                {
+                    ClearAllTileHighlights();
+                }
             }
         }
 
@@ -413,10 +556,28 @@ namespace AncientTree.Board
             var pawn = ActivePawn;
             if (player == null || pawn == null) return false;
 
-            TileController currentTile = _mapGenerator.GetTile(pawn.CurrentCoords);
+            TileController currentTile = _mapGenerator != null ? _mapGenerator.GetTile(pawn.CurrentCoords) : null;
             if (currentTile == null) return false;
 
-            if (SettlementManager.Instance.CanPlaceSettlement(_activePlayerIndex, currentTile))
+            if (IsOnline)
+            {
+                var netMgr = AncientTree.Network.FogfieldNetworkManager.Instance;
+                bool isHost = netMgr != null && netMgr.IsHost;
+                int localSlot = netMgr != null ? netMgr.LocalPlayerSlotIndex : -1;
+                bool isMyTurn = (_activePlayerIndex == localSlot);
+                bool isHostBot = isHost && player.IsBot;
+
+                if (!isMyTurn && !isHostBot) return false;
+
+                if (SettlementManager.Instance != null && SettlementManager.Instance.CanPlaceSettlement(_activePlayerIndex, currentTile))
+                {
+                    AncientTree.Network.NetworkTurnManager.Instance?.CmdRequestBuildSettlement(_activePlayerIndex);
+                    return true;
+                }
+                return false;
+            }
+
+            if (SettlementManager.Instance != null && SettlementManager.Instance.CanPlaceSettlement(_activePlayerIndex, currentTile))
             {
                 bool success = SettlementManager.Instance.PlaceSettlement(_activePlayerIndex, player.PlayerColor, currentTile);
                 if (success)
@@ -429,6 +590,20 @@ namespace AncientTree.Board
                 }
             }
             return false;
+        }
+
+        public void ExecuteNetworkSettlementBuilt(Vector2Int coord, int playerIndex)
+        {
+            var tile = _mapGenerator != null ? _mapGenerator.GetTile(coord) : null;
+            var player = GetPlayer(playerIndex);
+            if (tile == null || player == null) return;
+
+            Color pColor = playerIndex < PlayerColors.Length ? PlayerColors[playerIndex] : player.PlayerColor;
+            SettlementManager.Instance?.PlaceSettlement(playerIndex, pColor, tile);
+            player.AddSettlement(coord);
+            player.RoundYield = SettlementManager.Instance != null ? SettlementManager.Instance.CalculatePlayerSettlementYield(playerIndex) : 0;
+            GameEvents.TriggerPlayerYieldUpdated(playerIndex, player.RoundYield);
+            GameEvents.TriggerPlayerScoreUpdated(playerIndex, player.TotalScore);
         }
 
         public void StartRelocationMode()
@@ -507,6 +682,25 @@ namespace AncientTree.Board
 
             if (_isRelocating) CancelRelocationMode();
 
+            if (IsOnline)
+            {
+                var netMgr = AncientTree.Network.FogfieldNetworkManager.Instance;
+                bool isHost = netMgr != null && netMgr.IsHost;
+                int localSlot = netMgr != null ? netMgr.LocalPlayerSlotIndex : -1;
+                bool isMyTurn = (_activePlayerIndex == localSlot);
+                bool isHostBot = isHost && (ActivePlayer != null && ActivePlayer.IsBot);
+
+                if (!isMyTurn && !isHostBot) return;
+
+                AncientTree.Network.NetworkTurnManager.Instance?.CmdRequestEndTurn(_activePlayerIndex);
+                return;
+            }
+
+            ExecuteLocalEndTurn();
+        }
+
+        private void ExecuteLocalEndTurn()
+        {
             _isActionLocked = true;
             _currentPhase = TurnPhase.TurnEnd;
             ClearAllTileHighlights();
@@ -524,6 +718,110 @@ namespace AncientTree.Board
                 // All players finished their turn: Process Round End Yield & Scoring
                 ProcessRoundEnd();
             }
+        }
+
+        public void ProcessHostEndTurn(int playerIndex)
+        {
+            if (_activePlayerIndex != playerIndex) return;
+
+            _isActionLocked = true;
+            _currentPhase = TurnPhase.TurnEnd;
+            ClearAllTileHighlights();
+
+            bool isLastPlayerInRound = (_activePlayerIndex == _playerCount - 1);
+
+            if (!isLastPlayerInRound)
+            {
+                int nextPlayerIndex = _activePlayerIndex + 1;
+                var p = GetPlayer(nextPlayerIndex);
+                string pName = p != null ? p.PlayerName : $"Oyuncu {nextPlayerIndex + 1}";
+                Color pColor = nextPlayerIndex < PlayerColors.Length ? PlayerColors[nextPlayerIndex] : Color.white;
+
+                AncientTree.Network.NetworkTurnManager.Instance?.BroadcastTurnChange(nextPlayerIndex, _currentRound, pName, pColor);
+            }
+            else
+            {
+                // Process Round End Yield & Scoring
+                for (int i = 0; i < _players.Count; i++)
+                {
+                    var player = _players[i];
+                    if (player == null) continue;
+
+                    int yield = SettlementManager.Instance != null ? SettlementManager.Instance.CalculatePlayerSettlementYield(player.PlayerIndex) : 0;
+                    player.RoundYield = yield;
+                    player.TotalScore += yield;
+
+                    GameEvents.TriggerPlayerYieldUpdated(player.PlayerIndex, player.RoundYield);
+                    GameEvents.TriggerPlayerScoreUpdated(player.PlayerIndex, player.TotalScore);
+                }
+
+                // Victory check
+                List<PlayerData> potentialWinners = new List<PlayerData>();
+                foreach (var p in _players)
+                {
+                    if (p.TotalScore >= AncientTree.Core.MatchConfig.Current.TargetScore)
+                    {
+                        potentialWinners.Add(p);
+                    }
+                }
+
+                if (potentialWinners.Count > 0)
+                {
+                    potentialWinners.Sort((a, b) =>
+                    {
+                        int comp = b.TotalScore.CompareTo(a.TotalScore);
+                        if (comp != 0) return comp;
+                        return b.RoundYield.CompareTo(a.RoundYield);
+                    });
+
+                    var winner = potentialWinners[0];
+                    AncientTree.Network.NetworkTurnManager.Instance?.BroadcastVictory(winner.PlayerIndex, winner.TotalScore, winner.PlayerName, winner.PlayerColor);
+                    return;
+                }
+
+                // Increment round and start next round from player 0
+                int nextRound = _currentRound + 1;
+                var firstP = GetPlayer(0);
+                string fName = firstP != null ? firstP.PlayerName : "Oyuncu 1";
+                Color fColor = PlayerColors.Length > 0 ? PlayerColors[0] : Color.white;
+
+                AncientTree.Network.NetworkTurnManager.Instance?.BroadcastTurnChange(0, nextRound, fName, fColor);
+            }
+        }
+
+        public void ExecuteNetworkTurnChange(int nextPlayerIndex, int round)
+        {
+            if (_currentRound != round)
+            {
+                _currentRound = round;
+                GameEvents.TriggerRoundChanged(_currentRound);
+
+                if (SettlementManager.Instance != null)
+                {
+                    for (int i = 0; i < _players.Count; i++)
+                    {
+                        var player = _players[i];
+                        if (player == null) continue;
+                        int yield = SettlementManager.Instance.CalculatePlayerSettlementYield(player.PlayerIndex);
+                        player.RoundYield = yield;
+                        player.TotalScore += yield;
+                        GameEvents.TriggerPlayerYieldUpdated(player.PlayerIndex, player.RoundYield);
+                        GameEvents.TriggerPlayerScoreUpdated(player.PlayerIndex, player.TotalScore);
+                    }
+                }
+            }
+
+            StartTurn(nextPlayerIndex);
+        }
+
+        public void ExecuteNetworkVictory(int winnerIndex, int winnerScore, string winnerName, Color winnerColor)
+        {
+            _isActionLocked = true;
+            _currentPhase = TurnPhase.TurnEnd;
+            ClearAllTileHighlights();
+
+            GameManager.Instance?.SetGameState(GameState.GameOver);
+            GameEvents.TriggerVictory(winnerIndex, winnerName, winnerColor, winnerScore);
         }
 
         /// <summary>
@@ -621,7 +919,7 @@ namespace AncientTree.Board
             return false;
         }
 
-        private bool IsTileOccupiedByOtherPawn(Vector2Int coords, int currentPlayerIndex)
+        public bool IsTileOccupiedByOtherPawn(Vector2Int coords, int currentPlayerIndex)
         {
             if (coords == MapGenerator.CenterCoords)
             {
@@ -724,7 +1022,14 @@ namespace AncientTree.Board
                 }
 
                 lastCoord = ActivePawn.CurrentCoords;
-                HandleMovementClick(bestNextTile);
+                if (IsOnline)
+                {
+                    OnTileClicked(bestNextTile);
+                }
+                else
+                {
+                    HandleMovementClick(bestNextTile);
+                }
 
                 // Wait for step animation
                 yield return new WaitForSeconds(0.15f);
@@ -949,5 +1254,6 @@ namespace AncientTree.Board
 
         public List<PlayerData> GetAllPlayers() => _players;
         public PlayerData GetPlayer(int index) => index >= 0 && index < _players.Count ? _players[index] : null;
+        public PawnController GetPawn(int index) => index >= 0 && index < _pawns.Count ? _pawns[index] : null;
     }
 }

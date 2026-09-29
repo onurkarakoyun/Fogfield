@@ -10,6 +10,7 @@ namespace AncientTree.Network
         public string RoomId;
         public string RoomCode;
         public string RoomName;
+        public string HostName;
         public string HostAddress;
         public ushort Port;
         public int CurrentPlayers;
@@ -19,11 +20,12 @@ namespace AncientTree.Network
         public bool IsPasswordProtected;
         public string Password;
 
-        public RoomInfo(string id, string code, string name, string address, ushort port, int current, int max, int targetScore, bool isPasswordProtected = false, string password = "", int ping = 25)
+        public RoomInfo(string id, string code, string name, string address, ushort port, int current, int max, int targetScore, bool isPasswordProtected = false, string password = "", int ping = 25, string hostName = "Lider")
         {
             RoomId = id;
             RoomCode = code;
             RoomName = name;
+            HostName = string.IsNullOrEmpty(hostName) ? "Lider" : hostName;
             HostAddress = address;
             Port = port;
             CurrentPlayers = current;
@@ -43,16 +45,17 @@ namespace AncientTree.Network
         public int ClientId;       // -1 = Empty, -2 = Bot, >= 0 = ClientId
         public bool IsReady;
         public bool IsHost;
-        public bool IsOccupied => ClientId != -1;
+        public bool IsOccupied;
         public bool IsBot => ClientId == -2;
 
-        public NetworkPlayerSlotInfo(int index, string name, int clientId, bool isReady, bool isHost)
+        public NetworkPlayerSlotInfo(int index, string name, int clientId, bool isReady, bool isHost, bool? isOccupied = null)
         {
             SlotIndex = index;
             PlayerName = name;
             ClientId = clientId;
             IsReady = isReady;
             IsHost = isHost;
+            IsOccupied = isOccupied.HasValue ? isOccupied.Value : (clientId != -1);
         }
     }
 
@@ -163,5 +166,77 @@ namespace AncientTree.Network
         public int GlimmerCount;
         public int PlayerCount;
         public int BotMask;
+    }
+
+    // ========================================================================
+    // IN-GAME TURN SYNCHRONIZATION BROADCASTS
+    // ========================================================================
+
+    public struct ClientDiceRollRequestBroadcast : IBroadcast
+    {
+        public int PlayerIndex;
+    }
+
+    public struct ServerDiceRollBroadcast : IBroadcast
+    {
+        public int RollResult;
+        public int PlayerIndex;
+    }
+
+    public struct ClientTileClickRequestBroadcast : IBroadcast
+    {
+        public int TargetX;
+        public int TargetY;
+        public int PlayerIndex;
+    }
+
+    public struct ServerMoveBroadcast : IBroadcast
+    {
+        public int FromX;
+        public int FromY;
+        public int ToX;
+        public int ToY;
+        public int PlayerIndex;
+        public bool WasFogged;
+        public int TileTypeInt;
+        public bool IsMountain;
+        public int NewRemainingSteps;
+    }
+
+    public struct ClientBuildSettlementRequestBroadcast : IBroadcast
+    {
+        public int PlayerIndex;
+    }
+
+    public struct ServerSettlementBuiltBroadcast : IBroadcast
+    {
+        public int X;
+        public int Y;
+        public int PlayerIndex;
+    }
+
+    public struct ClientEndTurnRequestBroadcast : IBroadcast
+    {
+        public int PlayerIndex;
+    }
+
+    public struct ServerTurnChangeBroadcast : IBroadcast
+    {
+        public int NextPlayerIndex;
+        public int CurrentRound;
+        public string PlayerName;
+        public float R;
+        public float G;
+        public float B;
+    }
+
+    public struct ServerVictoryBroadcast : IBroadcast
+    {
+        public int WinnerIndex;
+        public int WinnerScore;
+        public string WinnerName;
+        public float R;
+        public float G;
+        public float B;
     }
 }

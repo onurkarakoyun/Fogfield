@@ -132,6 +132,7 @@ namespace AncientTree.Board
         public void GenerateMap(int? customSeed = null)
         {
             int seed = customSeed ?? UnityEngine.Random.Range(10000, 999999);
+            UnityEngine.Random.InitState(seed);
             try
             {
                 System.Random rng = new System.Random(seed);

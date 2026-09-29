@@ -144,12 +144,9 @@ namespace AncientTree.UI
             {
                 escPressed = Keyboard.current.escapeKey.wasPressedThisFrame;
             }
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            escPressed = Input.GetKeyDown(KeyCode.Escape);
 #endif
-            if (!escPressed)
-            {
-                // Legacy Input fallback (also catches Android physical Back button)
-                escPressed = Input.GetKeyDown(KeyCode.Escape);
-            }
 
             if (escPressed)
             {

@@ -203,7 +203,7 @@ namespace AncientTree.UI
 #if ENABLE_INPUT_SYSTEM
             if (UnityEngine.InputSystem.Keyboard.current != null)
                 escPressed = UnityEngine.InputSystem.Keyboard.current.escapeKey.wasPressedThisFrame;
-#else
+#elif ENABLE_LEGACY_INPUT_MANAGER
             escPressed = Input.GetKeyDown(KeyCode.Escape);
 #endif
             if (escPressed)

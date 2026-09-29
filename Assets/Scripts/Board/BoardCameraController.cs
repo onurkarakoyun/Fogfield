@@ -269,6 +269,15 @@ namespace AncientTree.Board
             if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
             if (TurnManager.Instance == null || TurnManager.Instance.IsActionLocked) return;
 
+            var netMgr = AncientTree.Network.FogfieldNetworkManager.Instance;
+            if (netMgr != null && netMgr.IsOnline)
+            {
+                if (TurnManager.Instance.ActivePlayerIndex != netMgr.LocalPlayerSlotIndex)
+                {
+                    return;
+                }
+            }
+
             Ray ray = _cam.ScreenPointToRay(screenPos);
             int tileLayerMask = LayerMask.GetMask("Tile");
             if (tileLayerMask == 0) tileLayerMask = 1 << LayerMask.NameToLayer("Tile");
