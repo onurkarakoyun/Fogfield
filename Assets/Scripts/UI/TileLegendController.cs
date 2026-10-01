@@ -18,7 +18,7 @@ namespace AncientTree.UI
         [SerializeField] private TextMeshProUGUI _toggleButtonText;
 
         [Header("Animation Settings")]
-        [SerializeField] private float _expandedX = -20f;
+        [SerializeField] private float _expandedX = -15f;
         [SerializeField] private float _collapsedX = 275f;
         [SerializeField] private float _animDuration = 0.28f;
 
@@ -32,6 +32,15 @@ namespace AncientTree.UI
 
             if (_toggleButton != null)
                 _toggleButton.onClick.AddListener(ToggleFold);
+
+            // Ensure panel is positioned properly below TopBar (-74 on Y)
+            if (_panelRoot != null)
+            {
+                Vector2 pos = _panelRoot.anchoredPosition;
+                pos.x = _expandedX;
+                pos.y = -74f;
+                _panelRoot.anchoredPosition = pos;
+            }
         }
 
         public void ToggleFold()
@@ -62,6 +71,7 @@ namespace AncientTree.UI
             {
                 Vector2 pos = _panelRoot.anchoredPosition;
                 pos.x = targetX;
+                pos.y = -74f;
                 _panelRoot.anchoredPosition = pos;
             }
 

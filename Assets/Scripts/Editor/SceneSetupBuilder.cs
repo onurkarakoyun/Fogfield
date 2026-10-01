@@ -1140,8 +1140,8 @@ namespace AncientTree.Editor
 
         private static void BuildTileLegendUI(Transform hudRoot)
         {
-            // Compact 150px panel container locked Top-Right at (-15, -15)
-            GameObject legendPanel = CreateUIPanel("TileLegendPanel", hudRoot, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-15f, -15f), new Vector2(150f, 280f), new Color(0.10f, 0.12f, 0.17f, 0.94f));
+            // Compact 150px panel container locked Top-Right at (-15, -74) below the TopBar
+            GameObject legendPanel = CreateUIPanel("TileLegendPanel", hudRoot, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-15f, -74f), new Vector2(150f, 280f), new Color(0.10f, 0.12f, 0.17f, 0.94f));
             var lpRt = legendPanel.GetComponent<RectTransform>();
             lpRt.pivot = new Vector2(1f, 1f);
 
@@ -2164,6 +2164,8 @@ namespace AncientTree.Editor
         [MenuItem("Kadim Agac/Build Android APK")]
         public static void BuildAndroidApk()
         {
+            var prevGroup = EditorUserBuildSettings.selectedBuildTargetGroup;
+            var prevTarget = EditorUserBuildSettings.activeBuildTarget;
             try
             {
                 // Ensure scene is properly built and saved first
@@ -2201,6 +2203,13 @@ namespace AncientTree.Editor
             catch (System.Exception ex)
             {
                 Debug.LogError($"[Build EXCEPTION] {ex}");
+            }
+            finally
+            {
+                if (EditorUserBuildSettings.activeBuildTarget != prevTarget)
+                {
+                    EditorUserBuildSettings.SwitchActiveBuildTarget(prevGroup, prevTarget);
+                }
             }
         }
     }
