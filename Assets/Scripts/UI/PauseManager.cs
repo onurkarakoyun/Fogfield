@@ -203,9 +203,10 @@ namespace AncientTree.UI
 
             if (_pauseCard != null)
             {
+                _pauseCard.transform.DOKill();
                 _pauseCard.SetActive(true);
-                _pauseCard.transform.localScale = Vector3.zero;
-                _pauseCard.transform.DOScale(Vector3.one, 0.25f).SetEase(Ease.OutBack).SetUpdate(true);
+                _pauseCard.transform.localScale = Vector3.one * 0.85f;
+                _pauseCard.transform.DOScale(Vector3.one, 0.20f).SetEase(Ease.OutBack).SetUpdate(true);
             }
 
             if (_settingsPanel != null) _settingsPanel.SetActive(false);
@@ -218,11 +219,13 @@ namespace AncientTree.UI
 
             if (_pauseCard != null)
             {
+                _pauseCard.transform.DOKill();
                 _pauseCard.transform.DOScale(Vector3.zero, 0.15f).SetEase(Ease.InQuad).SetUpdate(true);
             }
 
             if (_overlayCanvasGroup != null)
             {
+                _overlayCanvasGroup.DOKill();
                 _overlayCanvasGroup.DOFade(0f, 0.15f).SetUpdate(true).OnComplete(() =>
                 {
                     if (_pauseOverlay != null) _pauseOverlay.SetActive(false);
@@ -252,10 +255,11 @@ namespace AncientTree.UI
 
             FindFirstObjectByType<MainMenuController>()?.SyncSettingsUI();
 
+            _settingsPanel.transform.DOKill();
             _settingsPanel.transform.SetAsLastSibling();
             _settingsPanel.SetActive(true);
-            _settingsPanel.transform.localScale = Vector3.zero;
-            _settingsPanel.transform.DOScale(Vector3.one, 0.22f).SetEase(Ease.OutBack).SetUpdate(true);
+            _settingsPanel.transform.localScale = Vector3.one * 0.85f;
+            _settingsPanel.transform.DOScale(Vector3.one, 0.20f).SetEase(Ease.OutBack).SetUpdate(true);
         }
 
         public void CloseSettings()
@@ -264,20 +268,24 @@ namespace AncientTree.UI
 
             if (_settingsPanel != null)
             {
+                _settingsPanel.transform.DOKill();
                 _settingsPanel.transform.DOScale(Vector3.zero, 0.15f).SetEase(Ease.InQuad).SetUpdate(true).OnComplete(() =>
                 {
                     _settingsPanel.SetActive(false);
                     if (IsPaused && _pauseCard != null)
                     {
+                        _pauseCard.transform.DOKill();
                         _pauseCard.SetActive(true);
-                        _pauseCard.transform.localScale = Vector3.zero;
-                        _pauseCard.transform.DOScale(Vector3.one, 0.22f).SetEase(Ease.OutBack).SetUpdate(true);
+                        _pauseCard.transform.localScale = Vector3.one * 0.85f;
+                        _pauseCard.transform.DOScale(Vector3.one, 0.20f).SetEase(Ease.OutBack).SetUpdate(true);
                     }
                 });
             }
             else if (IsPaused && _pauseCard != null)
             {
+                _pauseCard.transform.DOKill();
                 _pauseCard.SetActive(true);
+                _pauseCard.transform.localScale = Vector3.one;
             }
         }
 
@@ -295,9 +303,10 @@ namespace AncientTree.UI
             if (_confirmTitleText != null) _confirmTitleText.text = title;
             if (_confirmMessageText != null) _confirmMessageText.text = message;
 
+            _confirmModal.transform.DOKill();
             _confirmModal.SetActive(true);
-            _confirmModal.transform.localScale = Vector3.zero;
-            _confirmModal.transform.DOScale(Vector3.one, 0.22f).SetEase(Ease.OutBack).SetUpdate(true);
+            _confirmModal.transform.localScale = Vector3.one * 0.85f;
+            _confirmModal.transform.DOScale(Vector3.one, 0.20f).SetEase(Ease.OutBack).SetUpdate(true);
         }
 
         public void CloseConfirmation()
@@ -307,6 +316,7 @@ namespace AncientTree.UI
 
             if (_confirmModal != null)
             {
+                _confirmModal.transform.DOKill();
                 _confirmModal.transform.DOScale(Vector3.zero, 0.15f).SetEase(Ease.InQuad).SetUpdate(true).OnComplete(() =>
                 {
                     _confirmModal.SetActive(false);

@@ -289,13 +289,24 @@ namespace AncientTree.Board
         }
 
         /// <summary>
-        /// Claims tile territory for the player: tints tile surface with player color using MaterialPropertyBlock
+        /// Claims tile territory for the player: tints tile border frame with player color using MaterialPropertyBlock
         /// and smoothly animates territory overlay with DOTween without cloning materials.
         /// </summary>
         public void PlaceSettlement(int playerIndex, Color playerColor)
         {
             HasSettlement = true;
             SettlementOwnerIndex = playerIndex;
+
+            // Strict player color mapping to prevent white borders or washed out tints:
+            // 0 -> Vivid Blue, 1 -> Vivid Red, 2 -> Vivid Green, 3 -> Vivid Gold
+            Color resolvedColor = playerIndex switch
+            {
+                0 => new Color(0.18f, 0.55f, 1.0f, 1f),
+                1 => new Color(1.0f, 0.22f, 0.22f, 1f),
+                2 => new Color(0.20f, 0.88f, 0.35f, 1f),
+                3 => new Color(1.0f, 0.82f, 0.10f, 1f),
+                _ => (playerColor != default && playerColor.a > 0.1f && playerColor != Color.white) ? playerColor : new Color(0.08f, 0.08f, 0.08f, 1f)
+            };
 
             _territoryTween?.Kill();
 
@@ -310,17 +321,17 @@ namespace AncientTree.Board
                     _territoryTween = DOTween.To(() => alpha, a =>
                     {
                         alpha = a;
-                        Color c = new Color(playerColor.r, playerColor.g, playerColor.b, alpha);
+                        Color c = new Color(resolvedColor.r, resolvedColor.g, resolvedColor.b, alpha);
                         foreach (var rend in renderers)
                         {
                             if (rend == null) continue;
                             rend.GetPropertyBlock(_territoryPropBlock);
                             _territoryPropBlock.SetColor("_BaseColor", c);
                             _territoryPropBlock.SetColor("_Color", c);
-                            _territoryPropBlock.SetColor("_EmissionColor", playerColor * 1.2f);
+                            _territoryPropBlock.SetColor("_EmissionColor", resolvedColor * 0.8f);
                             rend.SetPropertyBlock(_territoryPropBlock);
                         }
-                    }, 0.95f, 0.25f)
+                    }, 1.0f, 0.25f)
                     .SetEase(Ease.OutQuad)
                     .SetLink(_territoryOverlayObject);
                 }

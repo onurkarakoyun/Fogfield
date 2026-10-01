@@ -32,20 +32,6 @@ namespace AncientTree.UI
 
             if (_toggleButton != null)
                 _toggleButton.onClick.AddListener(ToggleFold);
-
-            // On mobile start collapsed to preserve screen estate; on PC start open
-            bool isMobile = Application.isMobilePlatform;
-#if UNITY_ANDROID || UNITY_IOS
-            isMobile = true;
-#endif
-            if (isMobile)
-            {
-                SetCollapsedImmediate(true);
-            }
-            else
-            {
-                SetCollapsedImmediate(false);
-            }
         }
 
         public void ToggleFold()

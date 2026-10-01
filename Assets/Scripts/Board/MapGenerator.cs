@@ -798,7 +798,7 @@ namespace AncientTree.Board
                 {
                     var shader = GetSafeShader(unlit: true);
                     _sharedTerritoryMaterial = new Material(shader);
-                    _sharedTerritoryMaterial.color = new Color(1f, 1f, 1f, 0.72f);
+                    _sharedTerritoryMaterial.color = new Color(0.08f, 0.08f, 0.08f, 1f);
                     _sharedTerritoryMaterial.SetFloat("_Surface", 1);
                     _sharedTerritoryMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
                     _sharedTerritoryMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);

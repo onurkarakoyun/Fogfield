@@ -120,7 +120,13 @@ namespace AncientTree.Settings
                 ["btn_quit"]                    = "Çıkış",
                 ["setup_target_score"]          = "Hedef Puan",
                 ["setup_mountains"]             = "Dağ Sayısı",
-                ["setup_glimmer"]               = "Parıltı Sayısı"
+                ["setup_glimmer"]               = "Parıltı Sayısı",
+                ["txt_game_paused"]             = "OYUN DURAKLATILDI",
+                ["btn_confirm_yes"]             = "Evet",
+                ["btn_confirm_cancel"]          = "İptal",
+                ["txt_confirm_quit_title"]      = "Menüye Dön?",
+                ["CONFIRM_RETURN_MENU_MSG"]     = "Mevcut oyun sonlandırılacak. Ana menüye dönmek istediğinize emin misiniz?",
+                ["CONFIRM_QUIT_MSG"]            = "Oyunu tamamen kapatmak istediğinize emin misiniz?"
             },
             ["EN"] = new Dictionary<string, string>
             {
@@ -225,7 +231,13 @@ namespace AncientTree.Settings
                 ["btn_quit"]                    = "Quit",
                 ["setup_target_score"]          = "Target Score",
                 ["setup_mountains"]             = "Mountains",
-                ["setup_glimmer"]               = "Glimmer Tiles"
+                ["setup_glimmer"]               = "Glimmer Tiles",
+                ["txt_game_paused"]             = "GAME PAUSED",
+                ["btn_confirm_yes"]             = "Yes",
+                ["btn_confirm_cancel"]          = "Cancel",
+                ["txt_confirm_quit_title"]      = "Return to Menu?",
+                ["CONFIRM_RETURN_MENU_MSG"]     = "Current game will end. Are you sure you want to return to Main Menu?",
+                ["CONFIRM_QUIT_MSG"]            = "Are you sure you want to quit the game?"
             }
         };
 

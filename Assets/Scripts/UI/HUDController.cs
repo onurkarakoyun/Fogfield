@@ -1082,28 +1082,28 @@ namespace AncientTree.UI
             if (_rollDiceButton != null)
             {
                 var txt = _rollDiceButton.GetComponentInChildren<TMPro.TextMeshProUGUI>();
-                if (txt != null && (string.IsNullOrEmpty(txt.text) || txt.text.StartsWith("btn_") || txt.text.StartsWith("but_") || txt.text == "Button"))
+                if (txt != null)
                     txt.text = LocalizationManager.Instance?.Get("hud_roll_dice") ?? LocalizationManager.Instance?.Get("BTN_ROLL") ?? "Zar At";
             }
             // End Turn button
             if (_endTurnButton != null)
             {
                 var txt = _endTurnButton.GetComponentInChildren<TMPro.TextMeshProUGUI>();
-                if (txt != null && (string.IsNullOrEmpty(txt.text) || txt.text.StartsWith("btn_") || txt.text.StartsWith("but_") || txt.text == "Button"))
+                if (txt != null)
                     txt.text = LocalizationManager.Instance?.Get("BTN_END_TURN") ?? "Turu Bitir";
             }
             // Build Settlement button
             if (_buildSettlementButton != null)
             {
                 var txt = _buildSettlementButton.GetComponentInChildren<TMPro.TextMeshProUGUI>();
-                if (txt != null && (string.IsNullOrEmpty(txt.text) || txt.text.StartsWith("btn_") || txt.text.StartsWith("but_") || txt.text == "Button"))
+                if (txt != null)
                     txt.text = LocalizationManager.Instance?.Get("BTN_CLAIM") ?? "Karoyu Sahiplen";
             }
             // Relocate button
             if (_relocateSettlementButton != null)
             {
                 var txt = _relocateSettlementButton.GetComponentInChildren<TMPro.TextMeshProUGUI>();
-                if (txt != null && (string.IsNullOrEmpty(txt.text) || txt.text.StartsWith("btn_") || txt.text.StartsWith("but_") || txt.text == "Button"))
+                if (txt != null)
                     txt.text = LocalizationManager.Instance?.Get("BTN_RELOCATE") ?? "Sahipliği Taşı";
             }
         }

@@ -1087,6 +1087,7 @@ namespace AncientTree.Editor
             // Title: OYUN DURAKLATILDI
             var titleObj = CreateUIText("PauseTitle", pauseCard.transform, "OYUN DURAKLATILDI", 24, FontStyles.Bold, new Color(1f, 0.85f, 0.25f), TextAlignmentOptions.Center);
             SetRect(titleObj.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -38), new Vector2(420, 36));
+            titleObj.AddComponent<LocalizedText>().LocalizationKey = "txt_game_paused";
 
             // 4 Styled Buttons
             var resumeBtn = CreateStyledButton("ResumeButton", pauseCard.transform, "Devam Et", new Vector2(0, 50), new Vector2(320, 50), new Color(0.18f, 0.58f, 0.35f), "btn_resume");
@@ -1103,16 +1104,18 @@ namespace AncientTree.Editor
 
             var confAccent = CreateUIPanel("AccentBar", confirmCard.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -6), new Vector2(460, 4), new Color(0.85f, 0.35f, 0.35f));
 
-            var confTitle = CreateUIText("ConfirmTitle", confirmCard.transform, "EMİN MİSİNİZ?", 22, FontStyles.Bold, new Color(1f, 0.85f, 0.25f), TextAlignmentOptions.Center);
+            var confTitle = CreateUIText("ConfirmTitle", confirmCard.transform, "Menüye Dön?", 22, FontStyles.Bold, new Color(1f, 0.85f, 0.25f), TextAlignmentOptions.Center);
             SetRect(confTitle.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -32), new Vector2(460, 32));
+            confTitle.AddComponent<LocalizedText>().LocalizationKey = "txt_confirm_quit_title";
 
-            var confMsg = CreateUIText("ConfirmMessage", confirmCard.transform, "Mevcut oyun sonlandırılacak. Emin misiniz?", 15, FontStyles.Normal, Color.white, TextAlignmentOptions.Center);
+            var confMsg = CreateUIText("ConfirmMessage", confirmCard.transform, "Mevcut oyun sonlandırılacak. Ana menüye dönmek istediğinize emin misiniz?", 15, FontStyles.Normal, Color.white, TextAlignmentOptions.Center);
             SetRect(confMsg.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, 10), new Vector2(440, 70));
             var confMsgTmp = confMsg.GetComponent<TextMeshProUGUI>();
             confMsgTmp.textWrappingMode = TextWrappingModes.Normal;
+            confMsg.AddComponent<LocalizedText>().LocalizationKey = "CONFIRM_RETURN_MENU_MSG";
 
-            var yesBtn = CreateStyledButton("ConfirmYesButton", confirmCard.transform, "Evet", new Vector2(-95, -75), new Vector2(150, 44), new Color(0.65f, 0.22f, 0.22f), "BTN_YES");
-            var noBtn = CreateStyledButton("ConfirmNoButton", confirmCard.transform, "Vazgeç", new Vector2(95, -75), new Vector2(150, 44), new Color(0.32f, 0.35f, 0.42f), "BTN_CANCEL");
+            var yesBtn = CreateStyledButton("ConfirmYesButton", confirmCard.transform, "Evet", new Vector2(-95, -75), new Vector2(150, 44), new Color(0.65f, 0.22f, 0.22f), "btn_confirm_yes");
+            var noBtn = CreateStyledButton("ConfirmNoButton", confirmCard.transform, "İptal", new Vector2(95, -75), new Vector2(150, 44), new Color(0.32f, 0.35f, 0.42f), "btn_confirm_cancel");
 
             confirmModal.SetActive(false);
             pauseOverlay.SetActive(false);
@@ -1137,8 +1140,8 @@ namespace AncientTree.Editor
 
         private static void BuildTileLegendUI(Transform hudRoot)
         {
-            // Compact 150px panel container anchored Top-Right (ample width so MERKEZ is never clipped)
-            GameObject legendPanel = CreateUIPanel("TileLegendPanel", hudRoot, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-15f, -74f), new Vector2(150f, 280f), new Color(0.10f, 0.12f, 0.17f, 0.94f));
+            // Compact 150px panel container locked Top-Right at (-15, -15)
+            GameObject legendPanel = CreateUIPanel("TileLegendPanel", hudRoot, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-15f, -15f), new Vector2(150f, 280f), new Color(0.10f, 0.12f, 0.17f, 0.94f));
             var lpRt = legendPanel.GetComponent<RectTransform>();
             lpRt.pivot = new Vector2(1f, 1f);
 
@@ -1225,23 +1228,11 @@ namespace AncientTree.Editor
                 ptsRt.sizeDelta = new Vector2(98, 26);
             }
 
-            // Mini Fold/Expand Tab Button (on left edge of legend panel)
-            var foldBtnObj = CreateStyledButton("ToggleFoldBtn", legendPanel.transform, ">", Vector2.zero, new Vector2(26, 52), new Color(0.18f, 0.24f, 0.35f));
-            var foldRt = foldBtnObj.GetComponent<RectTransform>();
-            foldRt.anchorMin = new Vector2(0f, 0.5f);
-            foldRt.anchorMax = new Vector2(0f, 0.5f);
-            foldRt.pivot = new Vector2(1f, 0.5f);
-            foldRt.anchoredPosition = new Vector2(-2, 0);
-            var foldTxt = foldBtnObj.GetComponentInChildren<TextMeshProUGUI>();
-            if (foldTxt != null) foldTxt.fontSize = 14;
-
-            // Wire TileLegendController
+            // Wire TileLegendController (Panel permanently fixed in top-right, no fold tab button)
             var legendCtrl = legendPanel.AddComponent<TileLegendController>();
             SetField(legendCtrl, "_panelRoot", lpRt);
-            SetField(legendCtrl, "_toggleButton", foldBtnObj.GetComponent<Button>());
-            SetField(legendCtrl, "_toggleButtonText", foldTxt);
             SetField(legendCtrl, "_expandedX", -15f);
-            SetField(legendCtrl, "_collapsedX", 165f);
+            SetField(legendCtrl, "_collapsedX", -15f);
         }
 
         private static void BuildOnlineLobbyUI(Transform canvasRoot, GameObject managersObj)
@@ -2167,6 +2158,49 @@ namespace AncientTree.Editor
             catch (System.Exception ex)
             {
                 Debug.LogWarning("[FishNet] ReserializeFishNetSceneObjects notice: " + ex.Message);
+            }
+        }
+
+        [MenuItem("Kadim Agac/Build Android APK")]
+        public static void BuildAndroidApk()
+        {
+            try
+            {
+                // Ensure scene is properly built and saved first
+                BuildScene();
+
+                string scenePath = "Assets/Scenes/SampleScene.unity";
+                string desktop = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop);
+                string outPath = System.IO.Path.Combine(desktop, "Fogfield_Mobile.apk");
+
+                Debug.Log($"[Build] Starting Android APK build to: {outPath}");
+
+                EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Android, BuildTarget.Android);
+
+                BuildPlayerOptions buildPlayerOptions = new BuildPlayerOptions
+                {
+                    scenes = new string[] { scenePath },
+                    locationPathName = outPath,
+                    target = BuildTarget.Android,
+                    targetGroup = BuildTargetGroup.Android,
+                    options = BuildOptions.None
+                };
+
+                var report = BuildPipeline.BuildPlayer(buildPlayerOptions);
+                var summary = report.summary;
+
+                if (summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded)
+                {
+                    Debug.Log($"<color=green>[Build SUCCESS] APK created successfully: {outPath} ({summary.totalSize / (1024 * 1024)} MB)</color>");
+                }
+                else
+                {
+                    Debug.LogError($"[Build FAILED] Result: {summary.result}, Errors: {summary.totalErrors}");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[Build EXCEPTION] {ex}");
             }
         }
     }
