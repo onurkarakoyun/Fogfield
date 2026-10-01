@@ -23,31 +23,22 @@ namespace AncientTree.Network
 
         [Header("FishNet Core")]
         [SerializeField] private NetworkManager _networkManager;
+        public NetworkManager NetworkManager => _networkManager;
 
         [Header("Network Config")]
         [SerializeField] private string _defaultHostAddress = "127.0.0.1";
-        [SerializeField] private ushort _defaultPort = 7770;
+        [SerializeField] private ushort _defaultPort = 7777;  // Tugboat transport port (discovery: 7770)
 
         // Current Room State
         public RoomInfo CurrentRoom { get; private set; }
         private bool _isHostMode = false;
+        private int _localPlayerSlotIndex = -1;
+
         public bool IsHost => _isHostMode || (_networkManager != null && _networkManager.IsServerStarted);
         public bool IsClient => _networkManager != null && _networkManager.IsClientStarted;
         public bool IsOnline => IsHost || IsClient;
-        public int LocalClientId => _networkManager != null && _networkManager.ClientManager != null ? _networkManager.ClientManager.Connection.ClientId : -1;
-        public int LocalPlayerSlotIndex
-        {
-            get
-            {
-                if (IsHost) return 0;
-                int myId = LocalClientId;
-                for (int i = 0; i < 4; i++)
-                {
-                    if (PlayerSlots[i].ClientId == myId) return i;
-                }
-                return -1;
-            }
-        }
+        public int LocalClientId => _networkManager != null && _networkManager.ClientManager != null && _networkManager.ClientManager.Connection != null ? _networkManager.ClientManager.Connection.ClientId : -1;
+        public int LocalPlayerSlotIndex => IsHost ? 0 : _localPlayerSlotIndex;
 
         public NetworkPlayerSlotInfo[] PlayerSlots { get; } = new NetworkPlayerSlotInfo[4];
 
@@ -89,12 +80,6 @@ namespace AncientTree.Network
         private void Start()
         {
             RegisterFishNetEvents();
-
-            if (FogfieldNetworkDiscovery.Instance != null)
-            {
-                FogfieldNetworkDiscovery.Instance.OnServerDiscovered += HandleDiscoveryServerFound;
-                FogfieldNetworkDiscovery.Instance.OnServerLost += HandleDiscoveryServerLost;
-            }
         }
 
         private void RegisterFishNetEvents()
@@ -126,12 +111,6 @@ namespace AncientTree.Network
 
         private void OnDestroy()
         {
-            if (FogfieldNetworkDiscovery.Instance != null)
-            {
-                FogfieldNetworkDiscovery.Instance.OnServerDiscovered -= HandleDiscoveryServerFound;
-                FogfieldNetworkDiscovery.Instance.OnServerLost -= HandleDiscoveryServerLost;
-            }
-
             if (_networkManager != null)
             {
                 if (_networkManager.ServerManager != null)
@@ -189,10 +168,6 @@ namespace AncientTree.Network
 
         public void RefreshRooms()
         {
-            if (!IsHost && FogfieldNetworkDiscovery.Instance != null)
-            {
-                FogfieldNetworkDiscovery.Instance.SearchForServers();
-            }
             OnRoomListUpdated?.Invoke(GetAvailableRooms());
         }
 
@@ -220,11 +195,8 @@ namespace AncientTree.Network
 
             if (port == 0) port = _defaultPort;
 
-            // Activate [NetworkControllers] for online session
-            ActivateNetworkControllers(true);
-
-            // Configure Tugboat
-            ConfigureTugboat("127.0.0.1", port);
+            // Configure Tugboat as server (listen on all interfaces) and local client
+            ConfigureTugboat("127.0.0.1", port, asServer: true);
 
             // Start Server & Client
             bool serverStarted = _networkManager.ServerManager.StartConnection();
@@ -233,11 +205,25 @@ namespace AncientTree.Network
             if (serverStarted && clientStarted)
             {
                 _isHostMode = true;
+                _localPlayerSlotIndex = 0;
                 string code = GenerateRoomCode();
                 string hostName = PlayerPrefs.GetString("PlayerName", "Host (Sen)");
                 if (string.IsNullOrEmpty(hostName)) hostName = "Host (Sen)";
+                string localIp = "127.0.0.1";
+                try
+                {
+                    foreach (var ip in System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName()).AddressList)
+                    {
+                        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                        {
+                            localIp = ip.ToString();
+                            break;
+                        }
+                    }
+                }
+                catch { }
 
-                CurrentRoom = new RoomInfo(Guid.NewGuid().ToString().Substring(0, 8), code, roomName, "127.0.0.1", port, 1, maxPlayers, targetScore, isPasswordProtected, password, 5, hostName);
+                CurrentRoom = new RoomInfo(Guid.NewGuid().ToString().Substring(0, 8), code, roomName, localIp, port, 1, maxPlayers, targetScore, isPasswordProtected, password, 5, hostName);
 
                 ResetSlots();
                 int hostClientId = 0;
@@ -269,53 +255,51 @@ namespace AncientTree.Network
                 _discoveredRooms.Insert(0, CurrentRoom);
                 OnRoomListUpdated?.Invoke(GetAvailableRooms());
 
-                // Broadcast room presence over LAN via NetworkDiscovery
-                FogfieldNetworkDiscovery.Instance?.AdvertiseServer(CurrentRoom, hostName);
-
                 return true;
             }
             else
             {
-                ActivateNetworkControllers(false);
                 OnConnectionFailed?.Invoke("Host başlatılamadı. Port meşgul olabilir.");
                 return false;
             }
         }
 
-        // --- Join Room with Room Code ---
+        // --- Join Room with Room Code or IP ---
         public bool JoinByRoomCode(string inputCode, string password = "")
         {
             if (string.IsNullOrWhiteSpace(inputCode))
             {
-                OnConnectionFailed?.Invoke("Lütfen geçerli bir oda kodu girin!");
+                OnConnectionFailed?.Invoke("Lütfen geçerli bir oda kodu veya IP adresi girin!");
                 return false;
             }
 
             string code = inputCode.Trim().ToUpperInvariant();
 
-            // 1. Check in discovered rooms by RoomCode
-            var found = _discoveredRooms.Find(r => r.RoomCode != null && r.RoomCode.Equals(code, StringComparison.OrdinalIgnoreCase));
+            // 1. Check in discovered rooms by RoomCode or HostAddress
+            var found = _discoveredRooms.Find(r => (r.RoomCode != null && r.RoomCode.Equals(code, StringComparison.OrdinalIgnoreCase)) ||
+                                                 (r.HostAddress != null && r.HostAddress.Equals(code, StringComparison.OrdinalIgnoreCase)));
             if (!string.IsNullOrEmpty(found.RoomCode))
             {
                 return JoinRoom(found.HostAddress, found.Port, found.RoomCode, password);
             }
 
-            // 2. Direct IP / IP:Port fallback if user advanced test
-            if (code.Contains(".") || code.Contains(":"))
+            // 2. Direct IP / IP:Port fallback (e.g. "192.168.1.35", "192.168.1.35:7770", "localhost")
+            if (code.Contains(".") || code.Contains(":") || code.Equals("LOCALHOST", StringComparison.OrdinalIgnoreCase))
             {
-                string ip = code;
+                string ip = code.Equals("LOCALHOST", StringComparison.OrdinalIgnoreCase) ? "127.0.0.1" : code;
                 ushort port = _defaultPort;
-                if (code.Contains(":"))
+                if (ip.Contains(":"))
                 {
-                    var parts = code.Split(':');
+                    var parts = ip.Split(':');
                     ip = parts[0];
                     if (parts.Length > 1 && ushort.TryParse(parts[1], out ushort p)) port = p;
                 }
                 return JoinRoom(ip, port, code, password);
             }
 
-            // 3. Fallback: Local host with code
-            return JoinRoom(_defaultHostAddress, _defaultPort, code, password);
+            // 3. Not found in discovered rooms
+            OnConnectionFailed?.Invoke($"'{code}' kodlu oda bulunamadı.\nLütfen oda kodunu veya IP adresini kontrol edin.");
+            return false;
         }
 
         // --- Join Room (Client) ---
@@ -334,15 +318,11 @@ namespace AncientTree.Network
             _pendingRoomCode = !string.IsNullOrEmpty(roomCode) ? roomCode : "ONLINE";
             _pendingPassword = password ?? "";
 
-            // Activate [NetworkControllers] for online session
-            ActivateNetworkControllers(true);
-
-            ConfigureTugboat(address, port);
+            ConfigureTugboat(address, port, asServer: false);
 
             bool clientStarted = _networkManager.ClientManager.StartConnection();
             if (clientStarted)
             {
-                FogfieldNetworkDiscovery.Instance?.StopSearching();
                 string code = !string.IsNullOrEmpty(roomCode) ? roomCode : "ONLINE";
                 CurrentRoom = new RoomInfo("client_room", code, $"Oda [{code}]", address, port, 1, 4, 50, false, "", 20);
                 ResetSlots();
@@ -351,7 +331,6 @@ namespace AncientTree.Network
             }
             else
             {
-                ActivateNetworkControllers(false);
                 OnConnectionFailed?.Invoke("Sunucuya bağlanılamadı.");
                 return false;
             }
@@ -360,15 +339,6 @@ namespace AncientTree.Network
         // --- Leave / Disconnect ---
         public void LeaveRoom()
         {
-            if (IsHost)
-            {
-                FogfieldNetworkDiscovery.Instance?.StopAdvertisingServer();
-            }
-            else
-            {
-                FogfieldNetworkDiscovery.Instance?.StopSearching();
-            }
-
             if (_networkManager != null)
             {
                 if (IsHost)
@@ -395,7 +365,7 @@ namespace AncientTree.Network
 
             _discoveredRooms.RemoveAll(r => r.RoomCode == CurrentRoom.RoomCode);
             _isHostMode = false;
-            ActivateNetworkControllers(false);
+            _localPlayerSlotIndex = -1;
             NetworkTurnManager.Instance?.SetOnlineMatchActive(false);
             ResetSlots();
             OnLeftLobby?.Invoke();
@@ -415,7 +385,6 @@ namespace AncientTree.Network
             var room = CurrentRoom;
             room.CurrentPlayers = occupied;
             CurrentRoom = room;
-            FogfieldNetworkDiscovery.Instance?.UpdateAdvertisedPlayerCount(occupied);
         }
 
         public void AddBot(int slotIndex)
@@ -708,7 +677,8 @@ namespace AncientTree.Network
                         _networkManager.ServerManager.Broadcast(conn, new ServerJoinResultBroadcast
                         {
                             Success = false,
-                            Message = "Oda dolu! Katılınamadı."
+                            Message = "Oda dolu! Katılınamadı.",
+                            AssignedSlotIndex = -1
                         }, false);
                     }
                     conn.Disconnect(true);
@@ -720,7 +690,8 @@ namespace AncientTree.Network
                     _networkManager.ServerManager.Broadcast(conn, new ServerJoinResultBroadcast
                     {
                         Success = true,
-                        Message = "Bağlantı başarılı."
+                        Message = "Bağlantı başarılı.",
+                        AssignedSlotIndex = slot
                     }, false);
                 }
 
@@ -762,6 +733,16 @@ namespace AncientTree.Network
                     PlayerSlots[curSlot] = new NetworkPlayerSlotInfo(curSlot, "Boş Koltuk", -1, false, false);
                     BroadcastLobbyState();
                     OnPlayerSlotsChanged?.Invoke(PlayerSlots);
+
+                    if (_networkManager != null && _networkManager.ServerManager != null)
+                    {
+                        _networkManager.ServerManager.Broadcast(conn, new ServerJoinResultBroadcast
+                        {
+                            Success = true,
+                            Message = "Koltuk değiştirildi.",
+                            AssignedSlotIndex = msg.TargetSlotIndex
+                        }, false);
+                    }
                 }
             }
             catch (System.Exception ex)
@@ -854,6 +835,11 @@ namespace AncientTree.Network
                 {
                     LeaveRoom();
                     OnConnectionFailed?.Invoke(msg.Message);
+                }
+                else
+                {
+                    _localPlayerSlotIndex = msg.AssignedSlotIndex;
+                    Debug.Log($"[NetworkManager] Odaya başarıyla bağlandık. Yerel Slot İndeksi: {_localPlayerSlotIndex}");
                 }
             }
             catch (System.Exception ex)
@@ -954,16 +940,13 @@ namespace AncientTree.Network
                     cfg.GlimmerCount = b.GlimmerCount;
                 }
 
-                // 3. Switch GameState to Gameplay (activates InGame_HUD, camera controls, etc.)
-                GameManager.Instance?.SetGameState(GameState.Gameplay);
-
-                // 4. Generate identical procedural board from synchronized seed
+                // 3. Generate identical procedural board from synchronized seed
                 if (MapGenerator.Instance != null)
                 {
                     MapGenerator.Instance.GenerateMap(b.Seed);
                 }
 
-                // 5. Initialize players in TurnManager
+                // 4. Initialize players in TurnManager
                 if (TurnManager.Instance != null)
                 {
                     var slots = new List<PlayerSlotConfig>();
@@ -978,6 +961,9 @@ namespace AncientTree.Network
                     TurnManager.Instance.InitializeGame(slots);
                 }
 
+                // 5. Switch GameState to Gameplay (activates InGame_HUD, camera controls, etc.)
+                GameManager.Instance?.SetGameState(GameState.Gameplay);
+
                 // 6. Activate online state machine in NetworkTurnManager
                 NetworkTurnManager.Instance?.SetOnlineMatchActive(true);
             }
@@ -987,36 +973,21 @@ namespace AncientTree.Network
             }
         }
 
-        private void ActivateNetworkControllers(bool activate)
-        {
-            var netControllers = GameObject.Find("[NetworkControllers]");
-            if (netControllers == null)
-            {
-                foreach (var go in Resources.FindObjectsOfTypeAll<GameObject>())
-                {
-                    if (go.name == "[NetworkControllers]" && go.scene.isLoaded)
-                    {
-                        netControllers = go;
-                        break;
-                    }
-                }
-            }
-            if (netControllers != null)
-            {
-                // Always ensure it is active so FishNet scene objects register without error
-                netControllers.SetActive(true);
-            }
-        }
 
-        private void ConfigureTugboat(string address, ushort port)
+
+        private void ConfigureTugboat(string address, ushort port, bool asServer = false)
         {
             if (_networkManager != null && _networkManager.TransportManager != null)
             {
                 var tugboat = _networkManager.TransportManager.GetTransport<Tugboat>();
                 if (tugboat != null)
                 {
-                    tugboat.SetClientAddress(address);
                     tugboat.SetPort(port);
+                    tugboat.SetClientAddress(address);
+                    if (asServer)
+                    {
+                        tugboat.SetServerBindAddress("", IPAddressType.IPv4); // Binds to 0.0.0.0 (all network interfaces)
+                    }
                 }
             }
         }
@@ -1082,8 +1053,8 @@ namespace AncientTree.Network
                         // Send join request immediately
                         if (_networkManager != null && _networkManager.ClientManager != null)
                         {
-                            string pName = PlayerPrefs.GetString("PlayerName", "Misafir #" + LocalClientId);
-                            if (string.IsNullOrEmpty(pName)) pName = "Misafir #" + LocalClientId;
+                            string pName = PlayerPrefs.GetString("PlayerName", "");
+                            if (string.IsNullOrEmpty(pName)) pName = "Misafir";
                             _networkManager.ClientManager.Broadcast(new ClientJoinRequestBroadcast
                             {
                                 RoomCode = _pendingRoomCode,
@@ -1101,6 +1072,7 @@ namespace AncientTree.Network
                     {
                         ResetSlots();
                         OnLeftLobby?.Invoke();
+                        OnConnectionFailed?.Invoke("Sunucuya bağlanılamadı veya bağlantı kesildi.\nKurucunun IP adresini ve güvenlik duvarını kontrol edin.");
                     }
                 }
             }

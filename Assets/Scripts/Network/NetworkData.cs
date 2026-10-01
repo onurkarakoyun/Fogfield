@@ -114,6 +114,7 @@ namespace AncientTree.Network
     {
         public bool Success;
         public string Message;
+        public int AssignedSlotIndex;
     }
 
     /// <summary>

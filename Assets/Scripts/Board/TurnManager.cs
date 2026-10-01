@@ -138,6 +138,13 @@ namespace AncientTree.Board
                 _pawns.Add(pawnCtrl);
             }
 
+            // Explicitly notify score and yield reset (0) for all players
+            for (int i = 0; i < _players.Count; i++)
+            {
+                GameEvents.TriggerPlayerScoreUpdated(i, 0);
+                GameEvents.TriggerPlayerYieldUpdated(i, 0);
+            }
+
             GameEvents.TriggerRoundChanged(_currentRound);
             StartTurn(0);
         }
@@ -179,6 +186,27 @@ namespace AncientTree.Board
             _currentRound = 1;
             _isActionLocked = false;
             _isRelocating = false;
+            _currentPhase = TurnPhase.WaitingForRoll;
+            _remainingMovementPoints = 0;
+            _lastDiceRoll = 0;
+        }
+
+        /// <summary>
+        /// Hard-resets all turn state flags without destroying pawns.
+        /// Called by GameLifecycleManager before restart or scene transition.
+        /// </summary>
+        public void FullResetState()
+        {
+            StopAllCoroutines();
+            _diceSafetyCoroutine = null;
+            _botTurnCoroutine = null;
+            _isActionLocked = false;
+            _isRelocating = false;
+            _currentPhase = TurnPhase.WaitingForRoll;
+            _remainingMovementPoints = 0;
+            _lastDiceRoll = 0;
+            _activePlayerIndex = 0;
+            Debug.Log("[TurnManager] FullResetState: tüm flag'ler sıfırlandı.");
         }
 
         public Vector3 GetPawnCenterOffset(int index, int total)
@@ -983,87 +1011,133 @@ namespace AncientTree.Board
         private IEnumerator BotTurnRoutine()
         {
             int currentTurnPlayerIndex = _activePlayerIndex;
+            bool turnEndedCleanly = false;
 
-            // 1. Thinking pause before rolling dice (0.5s)
-            yield return new WaitForSeconds(0.5f);
-            if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
-
-            // Roll dice
-            RollDice();
-
-            // Wait until dice rolling finishes and phase advances
-            while (_currentPhase == TurnPhase.Rolling && IsBotTurnValid(currentTurnPlayerIndex))
+            try
             {
-                yield return null;
-            }
-            if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
+                // 1. Thinking pause before rolling dice (0.6s)
+                yield return new WaitForSeconds(0.6f);
+                if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
 
-            // 2. Movement Phase
-            Vector2Int lastCoord = ActivePawn != null ? ActivePawn.CurrentCoords : Vector2Int.zero;
+                // Roll dice
+                RollDice();
 
-            while (_currentPhase == TurnPhase.Moving && _remainingMovementPoints > 0 && IsBotTurnValid(currentTurnPlayerIndex))
-            {
-                // Wait for any running animation / lock to release
-                while (_isActionLocked && IsBotTurnValid(currentTurnPlayerIndex))
+                // Wait until phase leaves WaitingForRoll (enters Rolling or Moving via local/network dispatch)
+                float rollStartTimeout = 1.5f;
+                while (_currentPhase == TurnPhase.WaitingForRoll && rollStartTimeout > 0f && IsBotTurnValid(currentTurnPlayerIndex))
                 {
+                    rollStartTimeout -= Time.deltaTime;
                     yield return null;
                 }
-                if (!IsBotTurnValid(currentTurnPlayerIndex) || _currentPhase != TurnPhase.Moving) break;
+                if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
 
-                // Brief step pause for natural cadence
-                yield return new WaitForSeconds(0.25f);
-                if (!IsBotTurnValid(currentTurnPlayerIndex) || _currentPhase != TurnPhase.Moving) break;
-
-                TileController bestNextTile = EvaluateBestNextMove(lastCoord);
-                if (bestNextTile == null)
+                // Wait until dice rolling finishes and phase advances past Rolling
+                float rollCompleteTimeout = 3.5f;
+                while (_currentPhase == TurnPhase.Rolling && rollCompleteTimeout > 0f && IsBotTurnValid(currentTurnPlayerIndex))
                 {
-                    // No reachable valid moves
-                    break;
-                }
-
-                lastCoord = ActivePawn.CurrentCoords;
-                if (IsOnline)
-                {
-                    OnTileClicked(bestNextTile);
-                }
-                else
-                {
-                    HandleMovementClick(bestNextTile);
-                }
-
-                // Wait for step animation
-                yield return new WaitForSeconds(0.15f);
-                while (_isActionLocked && IsBotTurnValid(currentTurnPlayerIndex))
-                {
+                    rollCompleteTimeout -= Time.deltaTime;
                     yield return null;
                 }
+                if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
+
+                // Safety fallback if animation timeout dropped
+                if (_currentPhase == TurnPhase.Rolling)
+                {
+                    CompleteDiceRoll(_lastDiceRoll > 0 ? _lastDiceRoll : UnityEngine.Random.Range(1, 5));
+                }
+
+                // 2. Movement Phase
+                Vector2Int lastCoord = ActivePawn != null ? ActivePawn.CurrentCoords : Vector2Int.zero;
+
+                while (_currentPhase == TurnPhase.Moving && _remainingMovementPoints > 0 && IsBotTurnValid(currentTurnPlayerIndex))
+                {
+                    // Wait for any running animation / lock to release
+                    while (_isActionLocked && IsBotTurnValid(currentTurnPlayerIndex))
+                    {
+                        yield return null;
+                    }
+                    if (!IsBotTurnValid(currentTurnPlayerIndex) || _currentPhase != TurnPhase.Moving || _remainingMovementPoints <= 0) break;
+
+                    // Brief step pause for natural cadence
+                    yield return new WaitForSeconds(0.35f);
+                    if (!IsBotTurnValid(currentTurnPlayerIndex) || _currentPhase != TurnPhase.Moving || _remainingMovementPoints <= 0) break;
+
+                    TileController bestNextTile = EvaluateBestNextMove(lastCoord);
+                    if (bestNextTile == null)
+                    {
+                        // No reachable valid moves
+                        break;
+                    }
+
+                    lastCoord = ActivePawn != null ? ActivePawn.CurrentCoords : lastCoord;
+                    int mpBefore = _remainingMovementPoints;
+
+                    if (IsOnline)
+                    {
+                        OnTileClicked(bestNextTile);
+                    }
+                    else
+                    {
+                        HandleMovementClick(bestNextTile);
+                    }
+
+                    // Wait until step is processed (remaining MP decreases or phase changes) and action lock is released
+                    float stepTimeout = 3.0f;
+                    yield return null; // Wait at least 1 frame for lock or broadcast dispatch
+                    while ((_isActionLocked || _remainingMovementPoints == mpBefore) &&
+                           _currentPhase == TurnPhase.Moving &&
+                           stepTimeout > 0f &&
+                           IsBotTurnValid(currentTurnPlayerIndex))
+                    {
+                        stepTimeout -= Time.deltaTime;
+                        yield return null;
+                    }
+                }
+
+                if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
+
+                // Ensure transition to ActionSelection
+                float lockReleaseTimeout = 2.0f;
+                while (_isActionLocked && lockReleaseTimeout > 0f && IsBotTurnValid(currentTurnPlayerIndex))
+                {
+                    lockReleaseTimeout -= Time.deltaTime;
+                    yield return null;
+                }
+
+                if (_currentPhase != TurnPhase.ActionSelection && _currentPhase != TurnPhase.TurnEnd)
+                {
+                    _currentPhase = TurnPhase.ActionSelection;
+                    GameEvents.TriggerTurnPhaseChanged(_currentPhase);
+                }
+
+                // 3. Action Phase (Claim / Relocate / Pass)
+                yield return new WaitForSeconds(0.45f);
+                if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
+
+                try
+                {
+                    ExecuteBotAction();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[TurnManager] Error executing bot action: {ex.Message}");
+                }
+
+                // Brief pause before ending turn
+                yield return new WaitForSeconds(0.45f);
+                if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
+
+                EndTurn();
+                turnEndedCleanly = true;
             }
-
-            if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
-
-            // Ensure transition to ActionSelection
-            while (_isActionLocked && IsBotTurnValid(currentTurnPlayerIndex))
+            finally
             {
-                yield return null;
+                if (!turnEndedCleanly && IsBotTurnValid(currentTurnPlayerIndex))
+                {
+                    Debug.LogWarning($"[TurnManager] Bot turn routine did not finish cleanly. Forcing EndTurn to prevent lockup.");
+                    EndTurn();
+                }
             }
-
-            if (_currentPhase != TurnPhase.ActionSelection && _currentPhase != TurnPhase.TurnEnd)
-            {
-                _currentPhase = TurnPhase.ActionSelection;
-                GameEvents.TriggerTurnPhaseChanged(_currentPhase);
-            }
-
-            // 3. Action Phase (Claim / Relocate / Pass)
-            yield return new WaitForSeconds(0.4f);
-            if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
-
-            ExecuteBotAction();
-
-            // Brief pause before ending turn
-            yield return new WaitForSeconds(0.45f);
-            if (!IsBotTurnValid(currentTurnPlayerIndex)) yield break;
-
-            EndTurn();
         }
 
         private bool IsBotTurnValid(int playerIndex)

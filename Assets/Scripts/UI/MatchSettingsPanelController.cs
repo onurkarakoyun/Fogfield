@@ -74,6 +74,13 @@ namespace AncientTree.UI
         private void Start()
         {
             SyncUIFromConfig();
+            AncientTree.Settings.LocalizationManager.OnLanguageChanged += SyncUIFromConfig;
+        }
+
+        private void OnDestroy()
+        {
+            AncientTree.Settings.LocalizationManager.OnLanguageChanged -= SyncUIFromConfig;
+            _panelTween?.Kill();
         }
 
         private void SetupListeners()
@@ -250,10 +257,6 @@ namespace AncientTree.UI
             _panelTween = seq;
         }
 
-        private void OnDestroy()
-        {
-            _panelTween?.Kill();
-        }
 
         public void ResetToDefaults()
         {
@@ -298,7 +301,8 @@ namespace AncientTree.UI
         {
             if (_targetScoreLabel != null)
             {
-                _targetScoreLabel.text = $"Hedef Puan: {val}";
+                string title = AncientTree.Settings.LocalizationManager.Instance?.Get("setup_target_score") ?? "Hedef Puan";
+                _targetScoreLabel.text = $"{title}: {val}";
             }
         }
 
@@ -306,7 +310,8 @@ namespace AncientTree.UI
         {
             if (_mountainLabel != null)
             {
-                _mountainLabel.text = $"Geçilmez Dağ: {val}";
+                string title = AncientTree.Settings.LocalizationManager.Instance?.Get("setup_mountains") ?? "Dağ Sayısı";
+                _mountainLabel.text = $"{title}: {val}";
             }
         }
 
@@ -314,7 +319,8 @@ namespace AncientTree.UI
         {
             if (_glimmerLabel != null)
             {
-                _glimmerLabel.text = $"Parıltılı Sis: {val}";
+                string title = AncientTree.Settings.LocalizationManager.Instance?.Get("setup_glimmer") ?? "Parıltı Sayısı";
+                _glimmerLabel.text = $"{title}: {val}";
             }
         }
 

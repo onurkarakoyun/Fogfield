@@ -1,62 +1,71 @@
 using UnityEngine;
 using TMPro;
-using UnityEngine.UI;
 using AncientTree.Core;
 using AncientTree.Settings;
 
 namespace AncientTree.UI
 {
+    /// <summary>
+    /// Attach to any TMP_Text to auto-update text when language changes.
+    /// Set LocalizationKey to the translation dictionary key.
+    /// </summary>
+    [RequireComponent(typeof(TMP_Text))]
     public class LocalizedText : MonoBehaviour
     {
-        [SerializeField] private string _localizationKey;
+        [Tooltip("Translation dictionary key (e.g. 'BTN_ROLL', 'TILE_SCORES_TITLE')")]
+        [SerializeField] private string _key;
 
-        private TextMeshProUGUI _tmpText;
-        private Text _legacyText;
+        [Tooltip("Optional format args — leave empty for plain text")]
+        [SerializeField] private string[] _args;
 
+        private TMP_Text _text;
+
+        /// <summary>
+        /// Public property for setting the key at editor/runtime — used by SceneSetupBuilder.
+        /// Setting this also triggers a Refresh.
+        /// </summary>
         public string LocalizationKey
         {
-            get => _localizationKey;
+            get => _key;
             set
             {
-                _localizationKey = value;
-                UpdateText();
+                _key = value;
+                if (isActiveAndEnabled) Refresh();
             }
         }
 
         private void Awake()
         {
-            _tmpText = GetComponent<TextMeshProUGUI>();
-            _legacyText = GetComponent<Text>();
-        }
-
-        private void Start()
-        {
-            UpdateText();
+            _text = GetComponent<TMP_Text>();
         }
 
         private void OnEnable()
         {
-            GameEvents.OnLanguageChanged += HandleLanguageChanged;
-            UpdateText();
+            GameEvents.OnLanguageChanged += OnLanguageChanged;
+            LocalizationManager.OnLanguageChanged += Refresh;
+            Refresh();
         }
 
         private void OnDisable()
         {
-            GameEvents.OnLanguageChanged -= HandleLanguageChanged;
+            GameEvents.OnLanguageChanged -= OnLanguageChanged;
+            LocalizationManager.OnLanguageChanged -= Refresh;
         }
 
-        private void HandleLanguageChanged(string lang)
+        private void OnLanguageChanged(string lang) => Refresh();
+
+        public void Refresh()
         {
-            UpdateText();
+            if (string.IsNullOrEmpty(_key) || LocalizationManager.Instance == null) return;
+            object[] castArgs = _args != null && _args.Length > 0 ? (object[])_args : null;
+            _text.text = LocalizationManager.Instance.Get(_key, castArgs);
         }
 
-        public void UpdateText()
+        public void SetKey(string key, params string[] args)
         {
-            if (string.IsNullOrEmpty(_localizationKey)) return;
-            string text = LocalizationManager.Instance != null ? LocalizationManager.Instance.Get(_localizationKey) : _localizationKey;
-
-            if (_tmpText != null) _tmpText.text = text;
-            else if (_legacyText != null) _legacyText.text = text;
+            _key  = key;
+            _args = args;
+            Refresh();
         }
     }
 }

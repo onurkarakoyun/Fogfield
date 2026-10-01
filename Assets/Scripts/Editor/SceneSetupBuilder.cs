@@ -131,6 +131,8 @@ namespace AncientTree.Editor
             var settMgr = GetOrAdd<SettlementManager>(managersObj);
             var boardInter = GetOrAdd<BoardInteraction>(managersObj);
             var pauseMgr = GetOrAdd<PauseManager>(managersObj);
+            var lifecycleMgr = GetOrAdd<GameLifecycleManager>(managersObj);
+            var relayNetMgr  = GetOrAdd<RelayNetworkManager>(managersObj);
 
             // FishNet NetworkManager in Scene
             GameObject nmObj = GameObject.Find("[NetworkManager]") ?? GameObject.Find("NetworkManager");
@@ -156,42 +158,30 @@ namespace AncientTree.Editor
                 GetOrAdd<FishNet.Transporting.Tugboat.Tugboat>(nmObj);
             }
 
+            var fishNetMgr = nmObj != null ? nmObj.GetComponent<FishNet.Managing.NetworkManager>() : null;
+
             // Network manager & lobby controller on [GameControllers] (pure MonoBehaviours)
             var netMgr = GetOrAdd<FogfieldNetworkManager>(managersObj);
-            var netDisc = GetOrAdd<FogfieldNetworkDiscovery>(managersObj);
+            SetField(netMgr, "_networkManager", fishNetMgr);
             var lobbyCtrl = GetOrAdd<LobbyMenuController>(managersObj);
 
-            // Clean up any NetworkObject/NetworkTurnManager from [GameControllers] so FishNet scene deactivation NEVER touches core game controllers
-            var oldNetTurn = managersObj.GetComponent<NetworkTurnManager>();
-            if (oldNetTurn != null) UnityEngine.Object.DestroyImmediate(oldNetTurn);
+            // NetworkTurnManager on [GameControllers] (pure MonoBehaviour using broadcast messages)
+            var netTurnMgr = GetOrAdd<NetworkTurnManager>(managersObj);
+            SetField(netTurnMgr, "_networkManager", fishNetMgr);
+
+            // Clean up any stale NetworkObject from [GameControllers]
             var oldNetObj = managersObj.GetComponent<FishNet.Object.NetworkObject>();
             if (oldNetObj != null) UnityEngine.Object.DestroyImmediate(oldNetObj);
 
-            // Dedicated [NetworkControllers] for FishNet NetworkBehaviour & NetworkObject (active for registration)
-            GameObject netControllersObj = null;
+            // Clean up obsolete [NetworkControllers] GameObject if present
             var allLoadedGOs = UnityEngine.Resources.FindObjectsOfTypeAll<GameObject>();
             foreach (var go in allLoadedGOs)
             {
                 if (go.name == "[NetworkControllers]" && go.scene.isLoaded)
                 {
-                    if (netControllersObj == null)
-                    {
-                        netControllersObj = go;
-                        netControllersObj.SetActive(true);
-                    }
-                    else
-                    {
-                        UnityEngine.Object.DestroyImmediate(go);
-                    }
+                    UnityEngine.Object.DestroyImmediate(go);
                 }
             }
-            if (netControllersObj == null)
-            {
-                netControllersObj = new GameObject("[NetworkControllers]");
-            }
-            GetOrAdd<FishNet.Object.NetworkObject>(netControllersObj);
-            var netTurnMgr = GetOrAdd<NetworkTurnManager>(netControllersObj);
-            netControllersObj.SetActive(true);
 
             // Board container (Board_Container / GridRoot)
             GameObject boardContainer = GameObject.Find("Board_Container") ?? GameObject.Find("BoardTiles");
@@ -303,6 +293,9 @@ namespace AncientTree.Editor
 
             // 5. SPLASH / INTRO SCREEN (topmost child, sortingOrder 999)
             BuildSplashScreenUI(canvasObj.transform, managersObj, menuRoot, menuCg);
+
+            // 6. Enforce Transform.localPosition.z == 0 on all UI elements
+            EnforceZeroLocalZ(canvasObj.transform);
         }
 
         private static (GameObject root, CanvasGroup cg, GameObject settingsPanel) BuildMainMenuUI(Transform canvasRoot, GameObject managersObj)
@@ -828,9 +821,16 @@ namespace AncientTree.Editor
             GameObject colorBadge = CreateUIPanel("ColorBanner", topBar.transform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(36, 0), new Vector2(22, 22), new Color(0.2f, 0.5f, 1f));
             var bannerImg = colorBadge.GetComponent<Image>();
 
-            // Turn text
-            GameObject turnTxtObj = CreateUIText("PlayerTurnText", topBar.transform, "Oyuncu 1'in Sırası", 26, FontStyles.Bold, Color.white, TextAlignmentOptions.MidlineLeft);
-            SetRect(turnTxtObj.GetComponent<RectTransform>(), new Vector2(0f, 0.5f), new Vector2(220, 0), new Vector2(340, 48));
+            // Turn text (Left-anchored next to badge with auto-sizing to prevent center badge collision)
+            GameObject turnTxtObj = CreateUIText("PlayerTurnText", topBar.transform, "Oyuncu 1'in Sırası", 22, FontStyles.Bold, Color.white, TextAlignmentOptions.MidlineLeft);
+            var turnTmp = turnTxtObj.GetComponent<TextMeshProUGUI>();
+            turnTmp.enableAutoSizing = true;
+            turnTmp.fontSizeMin = 15f;
+            turnTmp.fontSizeMax = 22f;
+            turnTmp.textWrappingMode = TextWrappingModes.NoWrap;
+            var turnRt = turnTxtObj.GetComponent<RectTransform>();
+            turnRt.pivot = new Vector2(0f, 0.5f);
+            SetRect(turnRt, new Vector2(0f, 0.5f), new Vector2(68, 0), new Vector2(380, 48));
 
             // Online Room Code Badge (Center of TopBar - only visible during online matches)
             GameObject roomCodeBadge = CreateUIPanel("OnlineRoomCodeBadge", topBar.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(210, 36), new Color(0.12f, 0.16f, 0.22f, 0.95f));
@@ -855,36 +855,35 @@ namespace AncientTree.Editor
             if (pauseTxt != null) { pauseTxt.fontSize = 18; }
             Button hudPauseBtn = pauseBtnObj.GetComponent<Button>();
 
-            // TOP LEFT: DYNAMIC SCOREBOARD PANEL (Positioned on left side with 25px safe margin)
-            GameObject scorePanel = CreateUIPanel("ScoreboardPanel", hudRoot.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), Vector2.zero, new Vector2(370, 240), new Color(0.11f, 0.13f, 0.17f, 0.94f));
+            // TOP LEFT: DYNAMIC SCOREBOARD PANEL (Wider 380px width with HorizontalLayoutGroup rows)
+            GameObject scorePanel = CreateUIPanel("ScoreboardPanel", hudRoot.transform, new Vector2(0f, 1f), new Vector2(0f, 1f), Vector2.zero, new Vector2(380, 240), new Color(0.11f, 0.13f, 0.17f, 0.94f));
             RectTransform spRt = scorePanel.GetComponent<RectTransform>();
             spRt.pivot = new Vector2(0f, 1f); // Top-left pivot
-            spRt.anchoredPosition = new Vector2(25f, -74f); // Clean 25px separation from left edge, 10px below TopBar
+            spRt.anchoredPosition = new Vector2(15f, -74f); // 15px from left, 10px below TopBar
 
             var panelOutline = scorePanel.AddComponent<Outline>();
             panelOutline.effectColor = new Color(0.20f, 0.34f, 0.48f, 0.75f);
             panelOutline.effectDistance = new Vector2(1.5f, -1.5f);
-            scorePanel.AddComponent<RectMask2D>();
 
             // Title: Fogfield Scoreboard
-            var scoreTitle = CreateUIText("ScoreboardTitle", scorePanel.transform, "FOGFIELD | Skor Tablosu (Hedef: 15) - Raunt 1", 13.5f, FontStyles.Bold, new Color(1f, 0.85f, 0.2f), TextAlignmentOptions.Center);
+            var scoreTitle = CreateUIText("ScoreboardTitle", scorePanel.transform, "FOGFIELD | Skor Tablosu (Hedef: 50) - Raunt 1", 12.5f, FontStyles.Bold, new Color(1f, 0.85f, 0.2f), TextAlignmentOptions.Center);
             RectTransform titleRt = scoreTitle.GetComponent<RectTransform>();
             titleRt.pivot = new Vector2(0.5f, 1f);
-            SetRect(titleRt, new Vector2(0.5f, 1f), new Vector2(0, -10), new Vector2(360, 24));
+            SetRect(titleRt, new Vector2(0.5f, 1f), new Vector2(0, -9), new Vector2(364, 22));
 
             // Decorative subtle divider below title
-            CreateUIPanel("ScoreboardDivider", scorePanel.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -36f), new Vector2(356f, 1.5f), new Color(0.25f, 0.38f, 0.50f, 0.6f));
+            CreateUIPanel("ScoreboardDivider", scorePanel.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -33f), new Vector2(364f, 1.5f), new Color(0.25f, 0.38f, 0.50f, 0.6f));
 
-            // Rows Container with compact spacing (8 units) and top offset to prevent overlap
+            // Rows Container
             GameObject rowsContainer = CreateUIPanel("RowsContainer", scorePanel.transform, new Vector2(0f, 0f), new Vector2(1f, 1f), Vector2.zero, Vector2.zero, Color.clear);
             RectTransform rowsRt = rowsContainer.GetComponent<RectTransform>();
             rowsRt.pivot = new Vector2(0.5f, 1f);
-            rowsRt.offsetMin = new Vector2(12f, 10f); // Left 12, Bottom 10
-            rowsRt.offsetMax = new Vector2(-12f, -44f); // Right -12, Top -44 (Safe gap below title/divider)
+            rowsRt.offsetMin = new Vector2(8f, 8f);
+            rowsRt.offsetMax = new Vector2(-8f, -40f);
 
             var vlg = rowsContainer.AddComponent<VerticalLayoutGroup>();
-            vlg.spacing = 8f; // Compact 8 units spacing between player cards
-            vlg.padding = new RectOffset(0, 0, 4, 4);
+            vlg.spacing = 6f;
+            vlg.padding = new RectOffset(0, 0, 2, 2);
             vlg.childAlignment = TextAnchor.UpperCenter;
             vlg.childControlWidth = true;
             vlg.childControlHeight = false;
@@ -894,31 +893,65 @@ namespace AncientTree.Editor
             // TOP RIGHT: TILE SCORING LEGEND GUIDE (Right-side info card with fold toggle)
             BuildTileLegendUI(hudRoot.transform);
 
-            // BOTTOM BAR: Controls, 1d4 Dice, Build, Relocate, End Turn
-            GameObject bottomBar = CreateUIPanel("BottomBar", hudRoot.transform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 75), new Vector2(850, 110), new Color(0.1f, 0.12f, 0.16f, 0.95f));
+            // BOTTOM BAR: Controls, 1d4 Dice, Build, Relocate, End Turn (380px centered at y=20)
+            GameObject bottomBar = CreateUIPanel("BottomBar", hudRoot.transform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 20), new Vector2(380, 88), new Color(0.1f, 0.12f, 0.16f, 0.95f));
+            var bbRt = bottomBar.GetComponent<RectTransform>();
+            bbRt.pivot = new Vector2(0.5f, 0f);
             var bottomBarCg = bottomBar.AddComponent<CanvasGroup>();
+            var bbOutline = bottomBar.AddComponent<Outline>();
+            bbOutline.effectColor = new Color(0.20f, 0.34f, 0.48f, 0.75f);
+            bbOutline.effectDistance = new Vector2(1.5f, -1.5f);
 
-            // Dice roll button with icon & text
-            var rollBtn = CreateStyledButton("RollDiceButton", bottomBar.transform, "ZAR AT", new Vector2(-280, 0), new Vector2(160, 65), new Color(0.85f, 0.55f, 0.12f));
+            var bHlg = bottomBar.AddComponent<HorizontalLayoutGroup>();
+            bHlg.padding = new RectOffset(8, 8, 6, 6);
+            bHlg.spacing = 8f;
+            bHlg.childAlignment = TextAnchor.MiddleCenter;
+            bHlg.childControlWidth = false;
+            bHlg.childControlHeight = false;
+            bHlg.childForceExpandWidth = false;
+            bHlg.childForceExpandHeight = false;
+
+            // 1. Roll Dice Button
+            var rollBtn = CreateStyledButton("RollDiceButton", bottomBar.transform, "ZAR AT", Vector2.zero, new Vector2(100, 70), new Color(0.85f, 0.55f, 0.12f));
             var diceVisual = rollBtn.transform.Find("Text")?.transform;
+            var rLe = rollBtn.AddComponent<LayoutElement>();
+            rLe.preferredWidth = 100f;
+            rLe.preferredHeight = 70f;
 
-            // Dice Result & HP texts
-            var diceResTxt = CreateUIText("DiceResultText", bottomBar.transform, "-", 34, FontStyles.Bold, new Color(1f, 0.9f, 0.3f), TextAlignmentOptions.Center);
-            SetRect(diceResTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-155, 12), new Vector2(70, 45));
+            // 2. Dice Result & Remaining HP mini-box (Center info)
+            var diceInfoObj = CreateUIPanel("DiceInfoBox", bottomBar.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(56, 70), new Color(0.14f, 0.17f, 0.23f, 0.85f));
+            var diLe = diceInfoObj.AddComponent<LayoutElement>();
+            diLe.preferredWidth = 56f;
+            diLe.preferredHeight = 70f;
+            var diOutline = diceInfoObj.AddComponent<Outline>();
+            diOutline.effectColor = new Color(0.25f, 0.35f, 0.48f, 0.6f);
+            diOutline.effectDistance = new Vector2(1, -1);
 
-            var remHpTxt = CreateUIText("RemainingHpText", bottomBar.transform, "Adım: -", 18, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
-            SetRect(remHpTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(-155, -22), new Vector2(100, 30));
+            var diceResTxt = CreateUIText("DiceResultText", diceInfoObj.transform, "-", 26, FontStyles.Bold, new Color(1f, 0.9f, 0.3f), TextAlignmentOptions.Center);
+            SetRect(diceResTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, 11), new Vector2(52, 28));
 
-            // Build Settlement Button
-            var buildBtn = CreateStyledButton("BuildSettlementButton", bottomBar.transform, "Yerleşke Dik", new Vector2(10, 0), new Vector2(170, 65), new Color(0.18f, 0.65f, 0.35f), "BUILD_SETTLEMENT");
+            var remHpTxt = CreateUIText("RemainingHpText", diceInfoObj.transform, "Adım: -", 11, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
+            SetRect(remHpTxt.GetComponent<RectTransform>(), new Vector2(0.5f, 0.5f), new Vector2(0, -14), new Vector2(52, 20));
+
+            // 3. Build Settlement Button
+            var buildBtn = CreateStyledButton("BuildSettlementButton", bottomBar.transform, "Yerleşke Dik", Vector2.zero, new Vector2(100, 70), new Color(0.18f, 0.65f, 0.35f), "BUILD_SETTLEMENT");
+            var bLe = buildBtn.AddComponent<LayoutElement>();
+            bLe.preferredWidth = 100f;
+            bLe.preferredHeight = 70f;
             buildBtn.SetActive(false);
 
-            // Relocate Settlement Button
-            var relocateBtn = CreateStyledButton("RelocateSettlementButton", bottomBar.transform, "Yerleşke Taşı", new Vector2(10, 0), new Vector2(170, 65), new Color(0.75f, 0.45f, 0.1f), "RELOCATE_SETTLEMENT");
+            // 4. Relocate Settlement Button
+            var relocateBtn = CreateStyledButton("RelocateSettlementButton", bottomBar.transform, "Yerleşke Taşı", Vector2.zero, new Vector2(100, 70), new Color(0.75f, 0.45f, 0.1f), "RELOCATE_SETTLEMENT");
+            var relLe = relocateBtn.AddComponent<LayoutElement>();
+            relLe.preferredWidth = 100f;
+            relLe.preferredHeight = 70f;
             relocateBtn.SetActive(false);
 
-            // End Turn Button
-            var endTurnBtn = CreateStyledButton("EndTurnButton", bottomBar.transform, "Turu Bitir", new Vector2(240, 0), new Vector2(170, 65), new Color(0.35f, 0.45f, 0.65f), "END_TURN");
+            // 5. End Turn Button
+            var endTurnBtn = CreateStyledButton("EndTurnButton", bottomBar.transform, "Turu Bitir", Vector2.zero, new Vector2(100, 70), new Color(0.35f, 0.45f, 0.65f), "END_TURN");
+            var eLe = endTurnBtn.AddComponent<LayoutElement>();
+            eLe.preferredWidth = 100f;
+            eLe.preferredHeight = 70f;
 
             // DYNAMIC 3D / ANIMATED CORNER DICE WIDGET (Screen Corner)
             GameObject diceWidget = CreateUIPanel("DiceRollingWidget", hudRoot.transform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(110, 110), new Vector2(90, 90), Color.clear);
@@ -1056,10 +1089,10 @@ namespace AncientTree.Editor
             SetRect(titleObj.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -38), new Vector2(420, 36));
 
             // 4 Styled Buttons
-            var resumeBtn = CreateStyledButton("ResumeButton", pauseCard.transform, "Devam Et", new Vector2(0, 50), new Vector2(320, 50), new Color(0.18f, 0.58f, 0.35f), "BTN_RESUME");
-            var settingsBtn = CreateStyledButton("SettingsButton", pauseCard.transform, "Ayarlar", new Vector2(0, -15), new Vector2(320, 50), new Color(0.22f, 0.38f, 0.55f), "BTN_SETTINGS");
-            var mainMenuBtn = CreateStyledButton("MainMenuButton", pauseCard.transform, "Ana Menüye Dön", new Vector2(0, -80), new Vector2(320, 50), new Color(0.45f, 0.35f, 0.25f), "BTN_MAIN_MENU");
-            var quitBtn = CreateStyledButton("QuitButton", pauseCard.transform, "Oyundan Çık", new Vector2(0, -145), new Vector2(320, 50), new Color(0.55f, 0.22f, 0.22f), "BTN_QUIT");
+            var resumeBtn = CreateStyledButton("ResumeButton", pauseCard.transform, "Devam Et", new Vector2(0, 50), new Vector2(320, 50), new Color(0.18f, 0.58f, 0.35f), "btn_resume");
+            var settingsBtn = CreateStyledButton("SettingsButton", pauseCard.transform, "Ayarlar", new Vector2(0, -15), new Vector2(320, 50), new Color(0.22f, 0.38f, 0.55f), "btn_settings");
+            var mainMenuBtn = CreateStyledButton("MainMenuButton", pauseCard.transform, "Ana Menüye Dön", new Vector2(0, -80), new Vector2(320, 50), new Color(0.45f, 0.35f, 0.25f), "btn_main_menu");
+            var quitBtn = CreateStyledButton("QuitButton", pauseCard.transform, "Oyundan Çık", new Vector2(0, -145), new Vector2(320, 50), new Color(0.55f, 0.22f, 0.22f), "btn_quit");
 
             // Confirmation Modal (overlay within pause menu)
             GameObject confirmModal = CreateUIPanel("ConfirmModal", pauseOverlay.transform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero, new Color(0f, 0f, 0f, 0.80f), raycastTarget: true);
@@ -1104,22 +1137,22 @@ namespace AncientTree.Editor
 
         private static void BuildTileLegendUI(Transform hudRoot)
         {
-            // Compact 125px panel container anchored Top-Right
-            GameObject legendPanel = CreateUIPanel("TileLegendPanel", hudRoot, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-15f, -74f), new Vector2(125f, 290f), new Color(0.10f, 0.12f, 0.17f, 0.94f));
+            // Compact 150px panel container anchored Top-Right (ample width so MERKEZ is never clipped)
+            GameObject legendPanel = CreateUIPanel("TileLegendPanel", hudRoot, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-15f, -74f), new Vector2(150f, 280f), new Color(0.10f, 0.12f, 0.17f, 0.94f));
             var lpRt = legendPanel.GetComponent<RectTransform>();
             lpRt.pivot = new Vector2(1f, 1f);
 
             var panelOutline = legendPanel.AddComponent<Outline>();
             panelOutline.effectColor = new Color(0.20f, 0.34f, 0.48f, 0.75f);
             panelOutline.effectDistance = new Vector2(1.5f, -1.5f);
-            legendPanel.AddComponent<RectMask2D>();
 
             // Title (Compact 12pt)
             var title = CreateUIText("LegendTitle", legendPanel.transform, "KARO PUANLARI", 12f, FontStyles.Bold, new Color(1f, 0.85f, 0.2f), TextAlignmentOptions.Center);
-            SetRect(title.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -9), new Vector2(115, 18));
+            SetRect(title.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -9), new Vector2(140, 18));
+            title.AddComponent<LocalizedText>().LocalizationKey = "hud_tile_legend_title";
 
             // Divider
-            CreateUIPanel("LegendDivider", legendPanel.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -23f), new Vector2(110f, 1.5f), new Color(0.25f, 0.38f, 0.50f, 0.6f));
+            CreateUIPanel("LegendDivider", legendPanel.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -23f), new Vector2(138f, 1.5f), new Color(0.25f, 0.38f, 0.50f, 0.6f));
 
             // Content container (VerticalLayoutGroup)
             GameObject rowsContainer = CreateUIPanel("LegendRows", legendPanel.transform, new Vector2(0f, 0f), new Vector2(1f, 1f), Vector2.zero, Vector2.zero, Color.clear);
@@ -1136,7 +1169,7 @@ namespace AncientTree.Editor
             vlg.childForceExpandHeight = false;
 
             // 7 Tile rows with real textures from Assets/models/textures/karo model/
-            // Note: Tile name texts are completely removed; each row is strictly [30x30 Icon] + [Points Text]
+            // Note: Tile name texts are completely removed; each row is strictly [Icon] + [Points Text]
             (string pts, string guid, Color fallbackCol, Color ptsCol)[] legendData = new[]
             {
                 ("+1 P", "9c3979deb09da3249a873a1791b0b49f", new Color(0.68f, 0.54f, 0.40f), Color.white),
@@ -1150,13 +1183,13 @@ namespace AncientTree.Editor
 
             for (int i = 0; i < legendData.Length; i++)
             {
-                var rowObj = CreateUIPanel($"Row_{i}", rowsContainer.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(117, 32), new Color(0.13f, 0.15f, 0.21f, 0.7f));
+                var rowObj = CreateUIPanel($"Row_{i}", rowsContainer.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(142, 32), new Color(0.13f, 0.15f, 0.21f, 0.7f));
                 var rLe = rowObj.AddComponent<LayoutElement>();
                 rLe.preferredHeight = 32f;
 
                 var hlg = rowObj.AddComponent<HorizontalLayoutGroup>();
-                hlg.padding = new RectOffset(8, 8, 1, 1);
-                hlg.spacing = 10f;
+                hlg.padding = new RectOffset(4, 4, 1, 1);
+                hlg.spacing = 6f;
                 hlg.childAlignment = TextAnchor.MiddleLeft;
                 hlg.childControlWidth = false;
                 hlg.childControlHeight = false;
@@ -1167,8 +1200,8 @@ namespace AncientTree.Editor
                 string texPath = AssetDatabase.GUIDToAssetPath(legendData[i].guid);
                 Sprite karoSprite = !string.IsNullOrEmpty(texPath) ? AssetDatabase.LoadAssetAtPath<Sprite>(texPath) : null;
 
-                // 30x30 Tile Texture Icon
-                var badge = CreateUIPanel("Icon", rowObj.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(30, 30), karoSprite != null ? Color.white : legendData[i].fallbackCol);
+                // Tile Texture Icon
+                var badge = CreateUIPanel("Icon", rowObj.transform, Vector2.zero, Vector2.zero, Vector2.zero, new Vector2(28, 28), karoSprite != null ? Color.white : legendData[i].fallbackCol);
                 var bImg = badge.GetComponent<Image>();
                 if (karoSprite != null)
                 {
@@ -1179,13 +1212,17 @@ namespace AncientTree.Editor
                 bOutline.effectColor = new Color(0.12f, 0.16f, 0.22f, 0.95f);
                 bOutline.effectDistance = new Vector2(1, -1);
 
-                // Points text (Fixed 60px left-aligned bold badge, no text wrapping)
-                var ptsTxt = CreateUIText("Points", rowObj.transform, legendData[i].pts, 14f, FontStyles.Bold, legendData[i].ptsCol, TextAlignmentOptions.MidlineLeft);
+                // Points text (Generous 98px width with overflow so MERKEZ is 100% visible)
+                var ptsTxt = CreateUIText("Points", rowObj.transform, legendData[i].pts, 12.5f, FontStyles.Bold, legendData[i].ptsCol, TextAlignmentOptions.MidlineLeft);
+                if (legendData[i].pts == "ENGEL") ptsTxt.AddComponent<LocalizedText>().LocalizationKey = "hud_obstacle";
+                else if (legendData[i].pts == "MERKEZ") ptsTxt.AddComponent<LocalizedText>().LocalizationKey = "hud_center";
                 var pTmp = ptsTxt.GetComponent<TextMeshProUGUI>();
                 pTmp.enableAutoSizing = false;
+                pTmp.margin = Vector4.zero;
+                pTmp.overflowMode = TextOverflowModes.Overflow;
                 pTmp.textWrappingMode = TextWrappingModes.NoWrap;
                 var ptsRt = ptsTxt.GetComponent<RectTransform>();
-                ptsRt.sizeDelta = new Vector2(60, 26);
+                ptsRt.sizeDelta = new Vector2(98, 26);
             }
 
             // Mini Fold/Expand Tab Button (on left edge of legend panel)
@@ -1204,7 +1241,7 @@ namespace AncientTree.Editor
             SetField(legendCtrl, "_toggleButton", foldBtnObj.GetComponent<Button>());
             SetField(legendCtrl, "_toggleButtonText", foldTxt);
             SetField(legendCtrl, "_expandedX", -15f);
-            SetField(legendCtrl, "_collapsedX", 135f);
+            SetField(legendCtrl, "_collapsedX", 165f);
         }
 
         private static void BuildOnlineLobbyUI(Transform canvasRoot, GameObject managersObj)
@@ -1227,8 +1264,8 @@ namespace AncientTree.Editor
             var createRoomBtn = CreateStyledButton("OpenCreateRoomBtn", browserPanel.transform, "+ Oda Kur", new Vector2(-280, 185), new Vector2(170, 46), new Color(0.18f, 0.62f, 0.35f));
             var refreshBtn = CreateStyledButton("RefreshRoomsBtn", browserPanel.transform, "Yenile", new Vector2(-120, 185), new Vector2(120, 46), new Color(0.25f, 0.38f, 0.52f));
 
-            var directIpInput = CreateTMPInputField("DirectIpInput", browserPanel.transform, new Vector2(0.5f, 0.5f), new Vector2(80, 185), new Vector2(210, 44), "", "6 Haneli Oda Kodu (ör. 749201)...");
-            var directJoinBtn = CreateStyledButton("DirectJoinBtn", browserPanel.transform, "Koda Göre Katıl", new Vector2(265, 185), new Vector2(140, 44), new Color(0.18f, 0.55f, 0.75f));
+            var directIpInput = CreateTMPInputField("DirectIpInput", browserPanel.transform, new Vector2(0.5f, 0.5f), new Vector2(75, 185), new Vector2(230, 44), "", "Oda Kodu / IP (Ör. 192.168.1.35)...");
+            var directJoinBtn = CreateStyledButton("DirectJoinBtn", browserPanel.transform, "Hızlı Katıl", new Vector2(265, 185), new Vector2(130, 44), new Color(0.18f, 0.55f, 0.75f));
 
             // Room List ScrollRect
             var (scrollObj, roomListContent) = CreateScrollRect("RoomListScrollView", browserPanel.transform, new Vector2(0.5f, 0.5f), new Vector2(0, -25), new Vector2(760, 360));
@@ -1290,7 +1327,7 @@ namespace AncientTree.Editor
             pOutline.effectColor = new Color(0.85f, 0.55f, 0.15f, 0.8f);
             pOutline.effectDistance = new Vector2(2f, -2f);
 
-            var promptTitle = CreateUIText("PromptTitle", promptCard.transform, "🔒 ŞİFRELİ ODA", 22, FontStyles.Bold, new Color(1f, 0.85f, 0.25f), TextAlignmentOptions.Center);
+            var promptTitle = CreateUIText("PromptTitle", promptCard.transform, "ŞİFRELİ ODA", 22, FontStyles.Bold, new Color(1f, 0.85f, 0.25f), TextAlignmentOptions.Center);
             SetRect(promptTitle.GetComponent<RectTransform>(), new Vector2(0.5f, 1f), new Vector2(0, -30), new Vector2(400, 32));
 
             var promptMsg = CreateUIText("PromptMessage", promptCard.transform, "Bu odaya katılmak için lütfen şifreyi girin:", 15, FontStyles.Normal, Color.white, TextAlignmentOptions.Center);
@@ -1623,6 +1660,21 @@ namespace AncientTree.Editor
 
         // ================= UI CREATION HELPERS =================
 
+        private static void EnforceZeroLocalZ(Transform root)
+        {
+            if (root == null) return;
+            var pos = root.localPosition;
+            if (Mathf.Abs(pos.z) > 0.0001f)
+            {
+                pos.z = 0f;
+                root.localPosition = pos;
+            }
+            for (int i = 0; i < root.childCount; i++)
+            {
+                EnforceZeroLocalZ(root.GetChild(i));
+            }
+        }
+
         private static GameObject CreateUIPanel(string name, Transform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 anchoredPos, Vector2 sizeDelta, Color color, bool raycastTarget = false)
         {
             GameObject obj = new GameObject(name);
@@ -1632,6 +1684,7 @@ namespace AncientTree.Editor
             rt.anchorMax = anchorMax;
             rt.anchoredPosition = anchoredPos;
             rt.sizeDelta = sizeDelta;
+            rt.localPosition = new Vector3(rt.localPosition.x, rt.localPosition.y, 0f);
 
             if (color.a > 0f)
             {
@@ -1647,6 +1700,7 @@ namespace AncientTree.Editor
             GameObject obj = new GameObject(name);
             obj.transform.SetParent(parent, false);
             var rt = obj.AddComponent<RectTransform>();
+            rt.localPosition = new Vector3(rt.localPosition.x, rt.localPosition.y, 0f);
             var tmp = obj.AddComponent<TextMeshProUGUI>();
             tmp.text = content;
             tmp.fontSize = fontSize;
@@ -1667,6 +1721,7 @@ namespace AncientTree.Editor
             rt.anchorMax = new Vector2(0.5f, 0.5f);
             rt.anchoredPosition = anchoredPos;
             rt.sizeDelta = size;
+            rt.localPosition = new Vector3(rt.localPosition.x, rt.localPosition.y, 0f);
 
             var img = btnObj.AddComponent<Image>();
             img.color = btnColor;
@@ -1689,9 +1744,10 @@ namespace AncientTree.Editor
             var btnTmp = txtObj.GetComponent<TextMeshProUGUI>();
             if (btnTmp != null)
             {
+                btnTmp.alignment = TextAlignmentOptions.Center;
                 btnTmp.enableAutoSizing = true;
-                btnTmp.fontSizeMin = 11;
-                btnTmp.fontSizeMax = 18;
+                btnTmp.fontSizeMin = 12;
+                btnTmp.fontSizeMax = 20;
             }
 
             if (!string.IsNullOrEmpty(locKey))

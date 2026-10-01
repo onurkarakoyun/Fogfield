@@ -15,23 +15,7 @@
         "com.unity.nuget.newtonsoft-json": "3.0.2",
         "com.unity.test-framework": "1.1.31"
       },
-      "hash": "8be7d96d95aa3e262894c64412f0df3b432efa05"
-    },
-    "com.firstgeargames.fishnet": {
-      "version": "https://github.com/FirstGearGames/FishNet.git?path=Assets/FishNet",
-      "depth": 0,
-      "source": "git",
-      "dependencies": {
-        "com.unity.nuget.newtonsoft-json": "3.2.1",
-        "com.unity.ugui": "1.0.0",
-        "com.unity.modules.animation": "1.0.0",
-        "com.unity.modules.imgui": "1.0.0",
-        "com.unity.modules.particlesystem": "1.0.0",
-        "com.unity.modules.physics": "1.0.0",
-        "com.unity.modules.physics2d": "1.0.0",
-        "com.unity.modules.ui": "1.0.0"
-      },
-      "hash": "7c4a6448d48ed65b154ebd5615c86fb9001da1cf"
+      "hash": "ba8a975b7e630414c4fe5a1041db67e7cacf7558"
     },
     "com.unity.2d.sprite": {
       "version": "1.0.0",
@@ -230,6 +214,29 @@
       "depth": 2,
       "source": "registry",
       "dependencies": {},
+      "url": "https://packages.unity.com"
+    },
+    "com.unity.services.authentication": {
+      "version": "3.4.0",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.ugui": "1.0.0",
+        "com.unity.services.core": "1.14.0",
+        "com.unity.nuget.newtonsoft-json": "3.2.1",
+        "com.unity.modules.unitywebrequest": "1.0.0"
+      },
+      "url": "https://packages.unity.com"
+    },
+    "com.unity.services.core": {
+      "version": "1.16.0",
+      "depth": 1,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.modules.androidjni": "1.0.0",
+        "com.unity.nuget.newtonsoft-json": "3.2.1",
+        "com.unity.modules.unitywebrequest": "1.0.0"
+      },
       "url": "https://packages.unity.com"
     },
     "com.unity.shadergraph": {

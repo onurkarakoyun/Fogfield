@@ -14,6 +14,8 @@ namespace AncientTree.UI
 {
     public class HUDController : MonoBehaviour
     {
+        public static HUDController Instance { get; private set; }
+
         [Header("Canvas Group")]
         [SerializeField] private CanvasGroup _hudCanvasGroup;
 
@@ -88,10 +90,48 @@ namespace AncientTree.UI
 
         private void Awake()
         {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+            Instance = this;
+
             SetupButtonListeners();
+            RefreshButtonLabels();
             if (_victoryPopup != null) _victoryPopup.SetActive(false);
             if (_relocationBanner != null) _relocationBanner.SetActive(false);
             if (_alertBanner != null) _alertBanner.SetActive(false);
+        }
+
+        /// <summary>
+        /// Resets all HUD button states to their defaults so the next game starts clean.
+        /// Called by GameLifecycleManager.TeardownAndResetState().
+        /// </summary>
+        public void ResetHUDState()
+        {
+            // Stop any outstanding watchdog so it doesn't interfere with the new game
+            if (_diceWatchdogCoroutine != null)
+            {
+                StopCoroutine(_diceWatchdogCoroutine);
+                _diceWatchdogCoroutine = null;
+            }
+
+            // Re-enable dice button — the #1 source of the "locked dice" bug
+            if (_rollDiceButton != null) _rollDiceButton.interactable = true;
+
+            // Re-enable the entire bottom action bar
+            if (_bottomBarCanvasGroup != null)
+            {
+                _bottomBarCanvasGroup.alpha = 1f;
+                _bottomBarCanvasGroup.interactable = true;
+                _bottomBarCanvasGroup.blocksRaycasts = true;
+            }
+
+            // Hide victory popup in case it was showing during restart
+            if (_victoryPopup != null) _victoryPopup.SetActive(false);
+
+            Debug.Log("[HUDController] ResetHUDState: butonlar sıfırlandı.");
         }
 
         private void OnEnable()
@@ -180,6 +220,7 @@ namespace AncientTree.UI
                         botFlags[i] = allPlayers[i].IsBot;
                     }
                 }
+                ClearScoreboard();
                 GameManager.Instance?.StartOfflineGame(count, botFlags);
             });
 
@@ -208,6 +249,8 @@ namespace AncientTree.UI
             {
                 if (_victoryPopup != null) _victoryPopup.SetActive(false);
                 UpdateOnlineRoomBadge();
+                ClearScoreboard();
+                BuildDynamicScoreboard();
             }
             else if (state == GameState.MainMenu)
             {
@@ -266,13 +309,13 @@ namespace AncientTree.UI
                 {
                     if (isMyTurn)
                     {
-                        _playerTurnText.text = "Senin Sıran! Zarı At";
+                        _playerTurnText.text = LocalizationManager.Instance?.Get("hud_your_turn") ?? "Senin Sıran! Zarı At";
                         _playerTurnText.color = new Color(0.18f, 0.95f, 0.45f);
                         _playerTurnText.transform.DOPunchScale(Vector3.one * 0.15f, 0.3f).SetLink(_playerTurnText.gameObject);
                     }
                     else
                     {
-                        _playerTurnText.text = $"[{playerName}]'in Sırası Bekleniyor...";
+                        _playerTurnText.text = LocalizationManager.Instance?.Get("hud_waiting_turn", playerName) ?? $"[{playerName}]'in Sırası Bekleniyor...";
                         _playerTurnText.color = new Color(0.75f, 0.8f, 0.9f, 0.85f);
                     }
                 }
@@ -280,7 +323,7 @@ namespace AncientTree.UI
                 {
                     if (TurnManager.Instance != null && TurnManager.Instance.ActivePlayer != null && TurnManager.Instance.ActivePlayer.IsBot)
                     {
-                        _playerTurnText.text = $"[{playerName}] (Bot) Oynuyor...";
+                        _playerTurnText.text = $"[{playerName}] (Bot)";
                         _playerTurnText.color = new Color(0.75f, 0.8f, 0.9f, 0.85f);
                     }
                     else
@@ -295,14 +338,17 @@ namespace AncientTree.UI
             if (_diceResultText != null) _diceResultText.text = "-";
             if (_remainingHpText != null)
             {
-                string label = LocalizationManager.Instance?.CurrentLanguage == "EN" ? "Steps" : "Adım";
-                _remainingHpText.text = $"{label}: -";
+                _remainingHpText.text = LocalizationManager.Instance?.Get("hud_steps_left", "-") ?? "Adım: -";
             }
 
             int totalPlayers = TurnManager.Instance != null ? TurnManager.Instance.PlayerCount : 0;
             if (_scoreRows.Count != totalPlayers)
             {
                 BuildDynamicScoreboard();
+            }
+            else
+            {
+                RefreshAllScoreboardRows();
             }
 
             // Highlight active player row
@@ -375,9 +421,7 @@ namespace AncientTree.UI
         {
             if (_remainingHpText != null)
             {
-                string label = LocalizationManager.Instance?.CurrentLanguage == "EN" ? "Adım" : "Adım";
-                if (LocalizationManager.Instance?.CurrentLanguage == "EN") label = "Steps";
-                _remainingHpText.text = $"{label}: {remaining}";
+                _remainingHpText.text = LocalizationManager.Instance?.Get("hud_steps_left", remaining) ?? $"Adım: {remaining}";
             }
             UpdateActionButtons();
         }
@@ -452,7 +496,7 @@ namespace AncientTree.UI
         {
             if (_scoreboardTitleText != null)
             {
-                int targetScore = PlayerData.TargetScoreToWin;
+                int targetScore = AncientTree.Core.MatchConfig.Current != null ? AncientTree.Core.MatchConfig.Current.TargetScore : PlayerData.TargetScoreToWin;
                 string format = LocalizationManager.Instance?.Get("ROUND_TITLE_FORMAT") ?? "Skor Tablosu (Hedef: {1}) - Raunt {0}";
                 _scoreboardTitleText.text = string.Format(format, round, targetScore);
             }
@@ -504,6 +548,7 @@ namespace AncientTree.UI
             UpdateScoreboardTitle(round);
             UpdateSettlementCounter();
             BuildDynamicScoreboard();
+            RefreshButtonLabels();
         }
 
         private void UpdateSettlementCounter()
@@ -694,6 +739,54 @@ namespace AncientTree.UI
             }
         }
 
+        public void RefreshAllScoreboardRows()
+        {
+            var players = TurnManager.Instance?.GetAllPlayers();
+            if (players == null) return;
+
+            if (_scoreRows.Count != players.Count)
+            {
+                BuildDynamicScoreboard();
+                return;
+            }
+
+            string pointUnit = LocalizationManager.Instance?.Get("SCORE_UNIT") ?? "Puan";
+
+            for (int i = 0; i < players.Count && i < _scoreRows.Count; i++)
+            {
+                var player = players[i];
+                var row = _scoreRows[i];
+
+                row.RollingScoreTween?.Kill();
+                row.FlashTween?.Kill();
+                row.FloatingTextSequence?.Kill();
+                if (row.FloatingGainText != null) row.FloatingGainText.gameObject.SetActive(false);
+
+                row.CurrentScore = player.TotalScore;
+
+                if (row.ColorIndicator != null) row.ColorIndicator.color = player.PlayerColor;
+                if (row.NameText != null) row.NameText.text = player.PlayerName;
+
+                int sCount = SettlementManager.Instance != null ? SettlementManager.Instance.GetSettlementCount(i) : 0;
+                if (row.SettlementText != null)
+                {
+                    row.SettlementText.text = $"{sCount}/{PlayerData.MaxSettlements}";
+                }
+
+                int yield = SettlementManager.Instance != null ? SettlementManager.Instance.CalculatePlayerSettlementYield(i) : 0;
+                if (row.YieldText != null)
+                {
+                    string yFormat = LocalizationManager.Instance?.Get("YIELD_FORMAT") ?? "+{0}/Tur";
+                    row.YieldText.text = string.Format(yFormat, yield);
+                }
+
+                if (row.ScoreText != null)
+                {
+                    row.ScoreText.text = $"{player.TotalScore} / {PlayerData.TargetScoreToWin} {pointUnit}";
+                }
+            }
+        }
+
         private void UpdateScoreboardEntry(int playerIndex, int score)
         {
             if (playerIndex >= 0 && playerIndex < _scoreRows.Count)
@@ -763,6 +856,11 @@ namespace AncientTree.UI
                 }
                 else
                 {
+                    row.RollingScoreTween?.Kill();
+                    row.FlashTween?.Kill();
+                    row.FloatingTextSequence?.Kill();
+                    if (row.FloatingGainText != null) row.FloatingGainText.gameObject.SetActive(false);
+
                     if (row.ScoreText != null)
                     {
                         row.ScoreText.text = $"{score} / {PlayerData.TargetScoreToWin} {pointUnit}";
@@ -792,7 +890,7 @@ namespace AncientTree.UI
         {
             GameObject row = new GameObject("ScoreRow");
             var rt = row.AddComponent<RectTransform>();
-            rt.sizeDelta = new Vector2(356, 32);
+            rt.sizeDelta = new Vector2(360, 32);
 
             var le = row.AddComponent<LayoutElement>();
             le.minHeight = 32f;
@@ -809,7 +907,17 @@ namespace AncientTree.UI
             rowOutline.effectColor = new Color(1f, 0.85f, 0.2f, 0f);
             rowOutline.effectDistance = new Vector2(2f, -2f);
 
-            // Active Border / Highlight Glow
+            // HorizontalLayoutGroup guarantees zero column collision
+            var hlg = row.AddComponent<HorizontalLayoutGroup>();
+            hlg.padding = new RectOffset(8, 8, 2, 2);
+            hlg.spacing = 6f;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            hlg.childControlWidth = false;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = false;
+
+            // Active Border / Highlight Glow (Ignored by layout)
             activeBorder = new GameObject("ActiveBorder");
             activeBorder.transform.SetParent(row.transform, false);
             var abRt = activeBorder.AddComponent<RectTransform>();
@@ -819,6 +927,8 @@ namespace AncientTree.UI
             var abImg = activeBorder.AddComponent<Image>();
             abImg.color = new Color(1f, 0.85f, 0.2f, 0.22f);
             abImg.raycastTarget = false;
+            var abLe = activeBorder.AddComponent<LayoutElement>();
+            abLe.ignoreLayout = true;
 
             // Active left accent indicator bar
             GameObject leftBar = new GameObject("ActiveLeftBar");
@@ -832,92 +942,96 @@ namespace AncientTree.UI
             lbImg.color = new Color(1f, 0.85f, 0.2f, 1f);
             lbImg.raycastTarget = false;
 
-            // Badge
+            // Badge (Color indicator)
             GameObject badge = new GameObject("ColorBadge");
             badge.transform.SetParent(row.transform, false);
             var bRt = badge.AddComponent<RectTransform>();
-            bRt.anchorMin = new Vector2(0f, 0.5f);
-            bRt.anchorMax = new Vector2(0f, 0.5f);
-            bRt.anchoredPosition = new Vector2(16f, 0f);
             bRt.sizeDelta = new Vector2(14f, 14f);
             colorImg = badge.AddComponent<Image>();
             colorImg.color = color;
             colorImg.raycastTarget = false;
+            var bLe = badge.AddComponent<LayoutElement>();
+            bLe.preferredWidth = 14f;
+            bLe.preferredHeight = 14f;
 
-            // Name
+            // Name (Flexible width with Ellipsis overflow)
             GameObject nameObj = new GameObject("NameText");
             nameObj.transform.SetParent(row.transform, false);
             var nRt = nameObj.AddComponent<RectTransform>();
-            nRt.anchorMin = new Vector2(0f, 0.5f);
-            nRt.anchorMax = new Vector2(0f, 0.5f);
-            nRt.anchoredPosition = new Vector2(75f, 0f);
-            nRt.sizeDelta = new Vector2(95f, 26f);
+            nRt.sizeDelta = new Vector2(100f, 26f);
             nameTxt = nameObj.AddComponent<TextMeshProUGUI>();
             nameTxt.text = playerName;
-            nameTxt.fontSize = 13;
+            nameTxt.fontSize = 12f;
             nameTxt.fontStyle = FontStyles.Bold;
             nameTxt.alignment = TextAlignmentOptions.MidlineLeft;
             nameTxt.color = Color.white;
+            nameTxt.textWrappingMode = TextWrappingModes.NoWrap;
+            nameTxt.overflowMode = TextOverflowModes.Ellipsis;
             nameTxt.raycastTarget = false;
+            var nLe = nameObj.AddComponent<LayoutElement>();
+            nLe.preferredWidth = 100f;
+            nLe.flexibleWidth = 1f;
 
             // Settlement Counter Text (e.g. 3/5)
             GameObject settObj = new GameObject("SettlementText");
             settObj.transform.SetParent(row.transform, false);
             var stRt = settObj.AddComponent<RectTransform>();
-            stRt.anchorMin = new Vector2(0f, 0.5f);
-            stRt.anchorMax = new Vector2(0f, 0.5f);
-            stRt.anchoredPosition = new Vector2(145f, 0f);
-            stRt.sizeDelta = new Vector2(40f, 26f);
+            stRt.sizeDelta = new Vector2(46f, 26f);
             settTxt = settObj.AddComponent<TextMeshProUGUI>();
             settTxt.text = $"{settlements}/{PlayerData.MaxSettlements}";
-            settTxt.fontSize = 12;
+            settTxt.fontSize = 11.5f;
             settTxt.fontStyle = FontStyles.Normal;
             settTxt.alignment = TextAlignmentOptions.Center;
             settTxt.color = new Color(0.7f, 0.85f, 1f);
+            settTxt.textWrappingMode = TextWrappingModes.NoWrap;
             settTxt.raycastTarget = false;
+            var stLe = settObj.AddComponent<LayoutElement>();
+            stLe.preferredWidth = 46f;
 
             // Yield Text (e.g. +3/Tur)
             GameObject yieldObj = new GameObject("YieldText");
             yieldObj.transform.SetParent(row.transform, false);
             var yRt = yieldObj.AddComponent<RectTransform>();
-            yRt.anchorMin = new Vector2(0f, 0.5f);
-            yRt.anchorMax = new Vector2(0f, 0.5f);
-            yRt.anchoredPosition = new Vector2(195f, 0f);
-            yRt.sizeDelta = new Vector2(55f, 26f);
+            yRt.sizeDelta = new Vector2(56f, 26f);
             yieldTxt = yieldObj.AddComponent<TextMeshProUGUI>();
             string yFormat = LocalizationManager.Instance?.Get("YIELD_FORMAT") ?? "+{0}/Tur";
             yieldTxt.text = string.Format(yFormat, yield);
-            yieldTxt.fontSize = 12;
+            yieldTxt.fontSize = 11.5f;
             yieldTxt.fontStyle = FontStyles.Bold;
             yieldTxt.alignment = TextAlignmentOptions.Center;
             yieldTxt.color = new Color(0.35f, 0.95f, 0.55f);
+            yieldTxt.textWrappingMode = TextWrappingModes.NoWrap;
             yieldTxt.raycastTarget = false;
+            var yLe = yieldObj.AddComponent<LayoutElement>();
+            yLe.preferredWidth = 56f;
 
-            // Score Text (e.g. 12 / 15 Puan)
+            // Score Text (e.g. 12 / 50 Puan)
             GameObject scoreObj = new GameObject("ScoreText");
             scoreObj.transform.SetParent(row.transform, false);
             var sRt = scoreObj.AddComponent<RectTransform>();
-            sRt.anchorMin = new Vector2(1f, 0.5f);
-            sRt.anchorMax = new Vector2(1f, 0.5f);
-            sRt.anchoredPosition = new Vector2(-45f, 0f);
-            sRt.sizeDelta = new Vector2(85f, 26f);
+            sRt.sizeDelta = new Vector2(96f, 26f);
             scoreTxt = scoreObj.AddComponent<TextMeshProUGUI>();
             scoreTxt.text = $"{score} / {PlayerData.TargetScoreToWin} {pointUnit}";
-            scoreTxt.fontSize = 12;
+            scoreTxt.fontSize = 12f;
             scoreTxt.fontStyle = FontStyles.Bold;
             scoreTxt.alignment = TextAlignmentOptions.MidlineRight;
             scoreTxt.color = new Color(1f, 0.85f, 0.2f);
+            scoreTxt.textWrappingMode = TextWrappingModes.NoWrap;
             scoreTxt.raycastTarget = false;
+            var sLe = scoreObj.AddComponent<LayoutElement>();
+            sLe.preferredWidth = 96f;
 
-            // Floating Gain Text (Popup animation on score increase)
+            // Floating Gain Text (Popup animation on score increase, ignored by layout)
             GameObject floatObj = new GameObject("FloatingGainText");
             floatObj.transform.SetParent(row.transform, false);
             var fRt = floatObj.AddComponent<RectTransform>();
             fRt.anchorMin = new Vector2(1f, 0.5f);
             fRt.anchorMax = new Vector2(1f, 0.5f);
             fRt.pivot = new Vector2(1f, 0.5f);
-            fRt.anchoredPosition = new Vector2(-10f, 0f);
+            fRt.anchoredPosition = new Vector2(-10f, 20f);
             fRt.sizeDelta = new Vector2(90f, 26f);
+            var fgLe = floatObj.AddComponent<LayoutElement>();
+            fgLe.ignoreLayout = true;
             floatingGainTxt = floatObj.AddComponent<TextMeshProUGUI>();
             floatingGainTxt.fontSize = 13;
             floatingGainTxt.fontStyle = FontStyles.Bold;
@@ -962,5 +1076,37 @@ namespace AncientTree.UI
                 row.FlashTween?.Kill();
             }
         }
+        private void RefreshButtonLabels()
+        {
+            // Roll Dice button
+            if (_rollDiceButton != null)
+            {
+                var txt = _rollDiceButton.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                if (txt != null && (string.IsNullOrEmpty(txt.text) || txt.text.StartsWith("btn_") || txt.text.StartsWith("but_") || txt.text == "Button"))
+                    txt.text = LocalizationManager.Instance?.Get("hud_roll_dice") ?? LocalizationManager.Instance?.Get("BTN_ROLL") ?? "Zar At";
+            }
+            // End Turn button
+            if (_endTurnButton != null)
+            {
+                var txt = _endTurnButton.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                if (txt != null && (string.IsNullOrEmpty(txt.text) || txt.text.StartsWith("btn_") || txt.text.StartsWith("but_") || txt.text == "Button"))
+                    txt.text = LocalizationManager.Instance?.Get("BTN_END_TURN") ?? "Turu Bitir";
+            }
+            // Build Settlement button
+            if (_buildSettlementButton != null)
+            {
+                var txt = _buildSettlementButton.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                if (txt != null && (string.IsNullOrEmpty(txt.text) || txt.text.StartsWith("btn_") || txt.text.StartsWith("but_") || txt.text == "Button"))
+                    txt.text = LocalizationManager.Instance?.Get("BTN_CLAIM") ?? "Karoyu Sahiplen";
+            }
+            // Relocate button
+            if (_relocateSettlementButton != null)
+            {
+                var txt = _relocateSettlementButton.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                if (txt != null && (string.IsNullOrEmpty(txt.text) || txt.text.StartsWith("btn_") || txt.text.StartsWith("but_") || txt.text == "Button"))
+                    txt.text = LocalizationManager.Instance?.Get("BTN_RELOCATE") ?? "Sahipliği Taşı";
+            }
+        }
+
     }
 }

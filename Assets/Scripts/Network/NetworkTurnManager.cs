@@ -29,7 +29,7 @@ namespace AncientTree.Network
         public bool IsOnlineMatchActive => _isOnlineMatchActive;
         public int CurrentNetworkPlayerIndex => _currentNetworkPlayerIndex;
 
-        private NetworkManager _networkManager;
+        [SerializeField] private NetworkManager _networkManager;
 
         private bool IsServer => _networkManager != null && _networkManager.IsServerStarted;
         private bool IsClient => _networkManager != null && _networkManager.IsClientStarted;
@@ -82,7 +82,7 @@ namespace AncientTree.Network
         {
             if (_networkManager == null)
             {
-                _networkManager = InstanceFinder.NetworkManager ?? FindFirstObjectByType<NetworkManager>();
+                _networkManager = (FogfieldNetworkManager.Instance != null ? FogfieldNetworkManager.Instance.NetworkManager : null) ?? InstanceFinder.NetworkManager ?? FindFirstObjectByType<NetworkManager>();
             }
         }
 

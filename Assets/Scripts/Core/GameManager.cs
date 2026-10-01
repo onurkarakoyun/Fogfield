@@ -31,10 +31,7 @@ namespace AncientTree.Core
             }
             Instance = this;
 
-            // Ensure background running so animations continue smoothly even when editor window is unfocused
             Application.runInBackground = true;
-
-            // Initialize DOTween once globally
             DOTween.Init(true, true, LogBehaviour.ErrorsOnly);
             DOTween.SetTweensCapacity(500, 50);
         }
@@ -52,52 +49,50 @@ namespace AncientTree.Core
 
         public void StartOfflineGame(System.Collections.Generic.List<PlayerSlotConfig> activeSlots)
         {
+            // Teardown any previous game state (flags, tweens) before starting fresh
+            GameLifecycleManager.Instance?.TeardownAndResetState(disconnectNetwork: false);
             StartCoroutine(StartOfflineGameRoutine(activeSlots));
         }
 
-        private System.Collections.IEnumerator StartOfflineGameRoutine(System.Collections.Generic.List<PlayerSlotConfig> activeSlots)
+        private System.Collections.IEnumerator StartOfflineGameRoutine(
+            System.Collections.Generic.List<PlayerSlotConfig> activeSlots)
         {
             // Wait one frame so any pending Destroy() from previous CleanupGame() executes
             yield return null;
-
-            SetGameState(GameState.Gameplay);
 
             if (_mapGenerator != null)
                 _mapGenerator.GenerateMap();
 
             if (_turnManager != null)
                 _turnManager.InitializeGame(activeSlots);
+
+            SetGameState(GameState.Gameplay);
         }
 
         public void StartOfflineGame(int playerCount, bool[] botFlags = null)
         {
-            SetGameState(GameState.Gameplay);
+            // Teardown any previous game state before starting fresh
+            GameLifecycleManager.Instance?.TeardownAndResetState(disconnectNetwork: false);
 
-            // Generate procedural board
             if (_mapGenerator != null)
-            {
                 _mapGenerator.GenerateMap();
-            }
 
-            // Initialize hotseat players and pawns
             if (_turnManager != null)
-            {
                 _turnManager.InitializeGame(playerCount, botFlags);
-            }
+
+            SetGameState(GameState.Gameplay);
         }
 
         public void ReturnToMainMenu()
         {
-            // Clear current board
+            // Full teardown: resets flags, DOTween, disconnects network if online
+            GameLifecycleManager.Instance?.TeardownAndResetState(disconnectNetwork: true);
+
             if (_mapGenerator != null)
-            {
                 _mapGenerator.ClearExistingTiles();
-            }
 
             if (_turnManager != null)
-            {
                 _turnManager.CleanupGame();
-            }
 
             SetGameState(GameState.MainMenu);
         }

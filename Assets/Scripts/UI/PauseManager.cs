@@ -83,32 +83,30 @@ namespace AncientTree.UI
             _mainMenuButton?.onClick.AddListener(() =>
             {
                 AudioManager.Instance?.PlayClick();
-                ShowConfirmation(
-                    "ANA MENÜYE DÖN",
-                    "Mevcut oyun sonlandırılacak. Kaydedilmemiş ilerlemeniz kaybolacak.\n\nAna menüye dönmek istediğinize emin misiniz?",
-                    () =>
-                    {
-                        Time.timeScale = 1f;
-                        IsPaused = false;
-                        if (_pauseOverlay != null) _pauseOverlay.SetActive(false);
-                        if (_confirmModal != null) _confirmModal.SetActive(false);
-                        GameManager.Instance?.ReturnToMainMenu();
-                    }
-                );
+                string title = LocalizationManager.Instance?.Get("btn_main_menu") ?? "ANA MENÜYE DÖN";
+                string msg = LocalizationManager.Instance?.Get("CONFIRM_RETURN_MENU_MSG") ??
+                    "Mevcut oyun sonlandırılacak. Kaydedilmemiş ilerlemeniz kaybolacak.\n\nAna menüye dönmek istediğinize emin misiniz?";
+                ShowConfirmation(title, msg, () =>
+                {
+                    Time.timeScale = 1f;
+                    IsPaused = false;
+                    if (_pauseOverlay != null) _pauseOverlay.SetActive(false);
+                    if (_confirmModal != null) _confirmModal.SetActive(false);
+                    GameManager.Instance?.ReturnToMainMenu();
+                });
             });
 
             _quitButton?.onClick.AddListener(() =>
             {
                 AudioManager.Instance?.PlayClick();
-                ShowConfirmation(
-                    "OYUNDAN ÇIK",
-                    "Oyunu tamamen kapatmak istediğinize emin misiniz?",
-                    () =>
-                    {
-                        Time.timeScale = 1f;
-                        GameManager.Instance?.QuitGame();
-                    }
-                );
+                string title = LocalizationManager.Instance?.Get("btn_quit") ?? "OYUNDAN ÇIK";
+                string msg = LocalizationManager.Instance?.Get("CONFIRM_QUIT_MSG") ??
+                    "Oyunu tamamen kapatmak istediğinize emin misiniz?";
+                ShowConfirmation(title, msg, () =>
+                {
+                    Time.timeScale = 1f;
+                    GameManager.Instance?.QuitGame();
+                });
             });
 
             _hudPauseButton?.onClick.AddListener(() =>

@@ -8,6 +8,7 @@ namespace AncientTree.Settings
     public class LocalizationManager : MonoBehaviour
     {
         public static LocalizationManager Instance { get; private set; }
+        public static event Action OnLanguageChanged;
 
         private const string PrefsKeyLanguage = "Settings_Language";
         private string _currentLanguage = "TR"; // Default Turkish
@@ -71,7 +72,55 @@ namespace AncientTree.Settings
                 ["PLAYER_3"] = "Oyuncu 3 (Sarı)",
                 ["PLAYER_4"] = "Oyuncu 4 (Yeşil)",
                 ["BOT"] = "Bot",
-                ["HUMAN"] = "İnsan"
+                ["HUMAN"] = "İnsan",
+                ["TILE_SCORES_TITLE"]           = "KARO PUANLARI",
+                ["TILE_CENTER"]                 = "Merkez (Kadim Ağaç)",
+                ["TILE_BARREN"]                 = "Çorak Toprak",
+                ["TILE_FERTILE"]                = "Verimli Toprak",
+                ["TILE_LUSH"]                   = "Lüks Vadi",
+                ["TILE_MOUNTAIN"]               = "Geçilmez Dağ",
+                ["TILE_ANCIENT_ORE"]            = "Kadim Cevher",
+                ["TILE_RADIANT_RUINS"]          = "Işıltılı Harabe",
+                ["LOBBY_WAITING_PLAYERS"]       = "Oyuncular Bekleniyor",
+                ["LOBBY_ROOM_CODE"]             = "ODA KODU:",
+                ["LOBBY_JOIN_CODE_LABEL"]       = "Katılım Kodu:",
+                ["LOBBY_JOIN_CODE_PLACEHOLDER"] = "6 haneli kodu girin...",
+                ["LOBBY_JOIN_CODE_HINT"]        = "Arkadaşının verdiği kodu gir",
+                ["LOBBY_CONNECT_BTN"]          = "Bağlan",
+                ["LOBBY_HOST_IP"]               = "Sunucu IP:",
+                ["LOBBY_STATUS_READY"]          = "HAZIR",
+                ["LOBBY_STATUS_WAITING"]        = "Bekleniyor...",
+                ["LOBBY_STATUS_HOST"]           = "LİDER [HAZIR]",
+                ["LOBBY_ERROR_EMPTY_CODE"]      = "Lütfen oda kodunu girin!",
+                ["LOBBY_ERROR_CONNECTING"]      = "Bağlanılamadı. Kodu kontrol edin.",
+                ["LOBBY_RELAY_CONNECTING"]      = "Bulut sunucusuna bağlanılıyor...",
+                ["LOBBY_RELAY_READY"]           = "Bağlantı Hazır!",
+                ["BTN_ROLL"]                    = "Zar At",
+                ["BTN_PASS"]                    = "Pas Geç",
+                ["BTN_CLAIM"]                   = "Karoyu Sahiplen",
+                ["BTN_RELOCATE"]                = "Sahipliği Taşı",
+                ["BTN_END_TURN"]                = "Turu Bitir",
+                ["BTN_READY"]                   = "Hazır",
+                ["BTN_START_MATCH"]             = "Maçı Başlat",
+                ["BTN_LEAVE_ROOM"]              = "Odadan Ayrıl",
+                ["BTN_ADD_BOT"]                 = "Bot Ekle",
+                ["BTN_KICK_PLAYER"]             = "Oyuncuyu At",
+                ["SCORE_BOARD_TITLE"]           = "FOGFIELD | Skor Durumu (Hedef: {0})",
+                ["hud_roll_dice"]               = "Zar At",
+                ["hud_pass_turn"]               = "Pas Geç",
+                ["hud_steps_left"]              = "Kalan Adım: {0}",
+                ["hud_waiting_turn"]            = "{0}'ın Sırası Bekleniyor...",
+                ["hud_your_turn"]               = "Senin Sıran! Zarı At",
+                ["hud_tile_legend_title"]       = "KARO PUANLARI",
+                ["hud_obstacle"]                = "ENGEL",
+                ["hud_center"]                  = "MERKEZ",
+                ["btn_resume"]                  = "Devam Et",
+                ["btn_settings"]                = "Ayarlar",
+                ["btn_main_menu"]               = "Ana Menü",
+                ["btn_quit"]                    = "Çıkış",
+                ["setup_target_score"]          = "Hedef Puan",
+                ["setup_mountains"]             = "Dağ Sayısı",
+                ["setup_glimmer"]               = "Parıltı Sayısı"
             },
             ["EN"] = new Dictionary<string, string>
             {
@@ -128,7 +177,55 @@ namespace AncientTree.Settings
                 ["PLAYER_3"] = "Player 3 (Yellow)",
                 ["PLAYER_4"] = "Player 4 (Green)",
                 ["BOT"] = "Bot",
-                ["HUMAN"] = "Human"
+                ["HUMAN"] = "Human",
+                ["TILE_SCORES_TITLE"]           = "TILE SCORES",
+                ["TILE_CENTER"]                 = "Center (Ancient Tree)",
+                ["TILE_BARREN"]                 = "Barren Land",
+                ["TILE_FERTILE"]                = "Fertile Land",
+                ["TILE_LUSH"]                   = "Lush Valley",
+                ["TILE_MOUNTAIN"]               = "Impassable Mountain",
+                ["TILE_ANCIENT_ORE"]            = "Ancient Ore",
+                ["TILE_RADIANT_RUINS"]          = "Radiant Ruins",
+                ["LOBBY_WAITING_PLAYERS"]       = "Waiting for Players",
+                ["LOBBY_ROOM_CODE"]             = "ROOM CODE:",
+                ["LOBBY_JOIN_CODE_LABEL"]       = "Join Code:",
+                ["LOBBY_JOIN_CODE_PLACEHOLDER"] = "Enter 6-char code...",
+                ["LOBBY_JOIN_CODE_HINT"]        = "Enter the code from your friend",
+                ["LOBBY_CONNECT_BTN"]          = "Connect",
+                ["LOBBY_HOST_IP"]               = "Host IP:",
+                ["LOBBY_STATUS_READY"]          = "READY",
+                ["LOBBY_STATUS_WAITING"]        = "Waiting...",
+                ["LOBBY_STATUS_HOST"]           = "HOST [READY]",
+                ["LOBBY_ERROR_EMPTY_CODE"]      = "Please enter a room code!",
+                ["LOBBY_ERROR_CONNECTING"]      = "Connection failed. Check the code.",
+                ["LOBBY_RELAY_CONNECTING"]      = "Connecting to cloud server...",
+                ["LOBBY_RELAY_READY"]           = "Connection Ready!",
+                ["BTN_ROLL"]                    = "Roll Dice",
+                ["BTN_PASS"]                    = "Pass",
+                ["BTN_CLAIM"]                   = "Claim Tile",
+                ["BTN_RELOCATE"]                = "Relocate Claim",
+                ["BTN_END_TURN"]                = "End Turn",
+                ["BTN_READY"]                   = "Ready",
+                ["BTN_START_MATCH"]             = "Start Match",
+                ["BTN_LEAVE_ROOM"]              = "Leave Room",
+                ["BTN_ADD_BOT"]                 = "Add Bot",
+                ["BTN_KICK_PLAYER"]             = "Kick Player",
+                ["SCORE_BOARD_TITLE"]           = "FOGFIELD | Scoreboard (Goal: {0})",
+                ["hud_roll_dice"]               = "Roll Dice",
+                ["hud_pass_turn"]               = "Pass Turn",
+                ["hud_steps_left"]              = "Steps: {0}",
+                ["hud_waiting_turn"]            = "Waiting for {0}...",
+                ["hud_your_turn"]               = "Your Turn! Roll Dice",
+                ["hud_tile_legend_title"]       = "TILE POINTS",
+                ["hud_obstacle"]                = "OBSTACLE",
+                ["hud_center"]                  = "CENTER",
+                ["btn_resume"]                  = "Resume",
+                ["btn_settings"]                = "Settings",
+                ["btn_main_menu"]               = "Main Menu",
+                ["btn_quit"]                    = "Quit",
+                ["setup_target_score"]          = "Target Score",
+                ["setup_mountains"]             = "Mountains",
+                ["setup_glimmer"]               = "Glimmer Tiles"
             }
         };
 
@@ -146,6 +243,7 @@ namespace AncientTree.Settings
         private void Start()
         {
             GameEvents.TriggerLanguageChanged(_currentLanguage);
+            OnLanguageChanged?.Invoke();
         }
 
         public void SetLanguage(string lang)
@@ -155,6 +253,21 @@ namespace AncientTree.Settings
             PlayerPrefs.SetString(PrefsKeyLanguage, _currentLanguage);
             PlayerPrefs.Save();
             GameEvents.TriggerLanguageChanged(_currentLanguage);
+            OnLanguageChanged?.Invoke();
+            ForceRefreshAllLocalizedTexts();
+        }
+
+        /// <summary>
+        /// Finds all active LocalizedText components in scene and forces them to re-read their key.
+        /// Call after language change for immediate UI update.
+        /// </summary>
+        private void ForceRefreshAllLocalizedTexts()
+        {
+            var all = FindObjectsByType<AncientTree.UI.LocalizedText>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            foreach (var lt in all)
+            {
+                lt.Refresh();
+            }
         }
 
         public string Get(string key, params object[] args)

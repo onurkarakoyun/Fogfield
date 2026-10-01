@@ -192,6 +192,23 @@ namespace AncientTree.UI
 
         private void Start()
         {
+            if (_directIpInput != null)
+            {
+                var placeholderText = _directIpInput.placeholder.GetComponent<TMPro.TextMeshProUGUI>();
+                if (placeholderText != null)
+                {
+                    placeholderText.text = "Katılım kodu veya IP (ör: ABCD12)";
+                }
+            }
+
+            if (RelayNetworkManager.Instance != null)
+            {
+                RelayNetworkManager.Instance.OnRelayJoinCodeReady += HandleRelayJoinCodeReady;
+                RelayNetworkManager.Instance.OnRelayFailed += HandleRelayFailed;
+                RelayNetworkManager.Instance.OnServicesError += HandleRelayServiceError;
+                RelayNetworkManager.Instance.OnLobbyListUpdated += HandleRelayLobbyListUpdated;
+            }
+
             if (FogfieldNetworkManager.Instance != null)
             {
                 FogfieldNetworkManager.Instance.OnRoomListUpdated += RenderRoomList;
@@ -210,6 +227,15 @@ namespace AncientTree.UI
         {
             _countdownSequence?.Kill();
             GameEvents.OnGameStateChanged -= HandleGameStateChanged;
+
+            if (RelayNetworkManager.Instance != null)
+            {
+                RelayNetworkManager.Instance.OnRelayJoinCodeReady -= HandleRelayJoinCodeReady;
+                RelayNetworkManager.Instance.OnRelayFailed -= HandleRelayFailed;
+                RelayNetworkManager.Instance.OnServicesError -= HandleRelayServiceError;
+                RelayNetworkManager.Instance.OnLobbyListUpdated -= HandleRelayLobbyListUpdated;
+            }
+
             if (FogfieldNetworkManager.Instance != null)
             {
                 FogfieldNetworkManager.Instance.OnRoomListUpdated -= RenderRoomList;
@@ -249,7 +275,9 @@ namespace AncientTree.UI
             _refreshRoomsButton?.onClick.AddListener(() =>
             {
                 AudioManager.Instance?.PlayClick();
-                FogfieldNetworkDiscovery.Instance?.SearchForServers();
+                // Try cloud lobby list first (Unity Relay), fallback to LAN discovery
+                if (RelayNetworkManager.Instance != null && RelayNetworkManager.Instance.IsServicesReady)
+                    RelayNetworkManager.Instance.RefreshLobbyListAsync();
                 FogfieldNetworkManager.Instance?.RefreshRooms();
             });
 
@@ -259,19 +287,30 @@ namespace AncientTree.UI
                 string code = _directIpInput != null ? _directIpInput.text.Trim() : "";
                 if (string.IsNullOrWhiteSpace(code))
                 {
-                    ShowToast("Lütfen geçerli bir oda kodu girin!");
+                    ShowToast("Lütfen oda kodu (6 harf) veya IP adresi girin!");
                     return;
                 }
 
-                // Check if discovered room with this code has password
+                // Relay join code: 6-char alphanumeric (e.g. "ABCD12") — no dots
+                bool looksLikeRelayCode = code.Length >= 5 && code.Length <= 8 && !code.Contains(".");
+                if (looksLikeRelayCode &&
+                    RelayNetworkManager.Instance != null &&
+                    RelayNetworkManager.Instance.IsServicesReady)
+                {
+                    ShowToast("Relay üzerinden bağlanılıyor...");
+                    RelayNetworkManager.Instance.JoinRelayByCodeAsync(code);
+                    return;
+                }
+
+                // Fallback: LAN / FishNet direct IP join
                 var rooms = FogfieldNetworkManager.Instance?.GetAvailableRooms();
-                var found = rooms?.Find(r => r.RoomCode != null && r.RoomCode.Equals(code, StringComparison.OrdinalIgnoreCase));
+                var found = rooms?.Find(r => (r.RoomCode != null && r.RoomCode.Equals(code, StringComparison.OrdinalIgnoreCase)) ||
+                                             (r.HostAddress != null && r.HostAddress.Equals(code, StringComparison.OrdinalIgnoreCase)));
                 if (found.HasValue && found.Value.IsPasswordProtected)
                 {
                     OpenPasswordPrompt(found.Value.RoomCode, found.Value.HostAddress, found.Value.Port);
                     return;
                 }
-
                 FogfieldNetworkManager.Instance?.JoinByRoomCode(code);
             });
 
@@ -333,7 +372,25 @@ namespace AncientTree.UI
 
                 int targetScore = _targetScoreSlider != null ? (int)_targetScoreSlider.value : 50;
                 _createRoomModal?.SetActive(false);
-                FogfieldNetworkManager.Instance?.StartHostRoom(name, _selectedMaxPlayers, targetScore, isPassword, pwd);
+
+                // RELAY PATH: cross-internet (different networks / mobile data)
+                if (RelayNetworkManager.Instance != null && RelayNetworkManager.Instance.IsServicesReady)
+                {
+                    ShowToast("Bulut sunucusuna bağlanılıyor...");
+                    RelayNetworkManager.Instance.OnRelayJoinCodeReady += (code) =>
+                    {
+                        ShowToast($"Oda kodu: {code}  —  Arkadaşına ver!");
+                        // Wire FishNet lobby UI
+                        FogfieldNetworkManager.Instance?.StartHostRoom(name, _selectedMaxPlayers, targetScore, isPassword, pwd);
+                    };
+                    RelayNetworkManager.Instance.OnRelayFailed += (err) => ShowToast(err);
+                    RelayNetworkManager.Instance.CreateRelayHostAsync(name, _selectedMaxPlayers, isPassword, pwd, targetScore);
+                }
+                else
+                {
+                    // FALLBACK: LAN / FishNet direct (same network)
+                    FogfieldNetworkManager.Instance?.StartHostRoom(name, _selectedMaxPlayers, targetScore, isPassword, pwd);
+                }
             });
 
             // Password Prompt Modal
@@ -556,13 +613,11 @@ namespace AncientTree.UI
 
             ResetAllSlotsUI();
             ShowPanel(_roomBrowserPanel);
-            FogfieldNetworkDiscovery.Instance?.SearchForServers();
             FogfieldNetworkManager.Instance?.RefreshRooms();
         }
 
         public void CloseLobby()
         {
-            FogfieldNetworkDiscovery.Instance?.StopSearching();
 
             if (_lobbyCanvasGroup != null)
             {
@@ -667,7 +722,7 @@ namespace AncientTree.UI
             nameRt.anchoredPosition = new Vector2(210, 0);
             nameRt.sizeDelta = new Vector2(390, 42);
             var nameTmp = nameObj.AddComponent<TextMeshProUGUI>();
-            string lockTag = room.IsPasswordProtected ? "<color=#FFD700>[KİLİTLİ 🔒]</color> " : "";
+            string lockTag = room.IsPasswordProtected ? "<color=#FFD700>[ŞİFRELİ]</color> " : "";
             string hostStr = !string.IsNullOrEmpty(room.HostName) ? $" <size=12><color=#A0B0C0>({room.HostName})</color></size>" : "";
             nameTmp.text = $"{lockTag}<b>{room.RoomName}</b>{hostStr}  <size=12><color=#60A5FA>[{room.RoomCode}]</color></size>  <size=12><color=#FBBF24>({room.TargetScore}P)</color></size>";
             nameTmp.fontSize = 15f;
@@ -760,11 +815,66 @@ namespace AncientTree.UI
             if (_stagingRoomTitleText != null && FogfieldNetworkManager.Instance != null)
             {
                 var cur = FogfieldNetworkManager.Instance.CurrentRoom;
-                string lockTag = cur.IsPasswordProtected ? "[KİLİTLİ 🔒] " : "";
-                _stagingRoomTitleText.text = $"{lockTag}ODA: {cur.RoomName}  |  KOD: {cur.RoomCode}  |  Hedef: {cur.TargetScore}P";
+                string lockTag = cur.IsPasswordProtected ? "[ŞİFRELİ] " : "";
+                string ipDisplay = (!string.IsNullOrEmpty(cur.HostAddress) && cur.HostAddress != "127.0.0.1") ? $"  |  IP: {cur.HostAddress}:{cur.Port}" : "";
+                _stagingRoomTitleText.text = $"{lockTag}ODA: {cur.RoomName}  |  KOD: {cur.RoomCode}{ipDisplay}  |  Hedef: {cur.TargetScore}P";
             }
 
             RefreshAllSlotsUI();
+
+            // Show Relay join code if available (cloud mode)
+            if (RelayNetworkManager.Instance != null && !string.IsNullOrEmpty(RelayNetworkManager.Instance.CurrentJoinCode))
+            {
+                if (_stagingRoomTitleText != null)
+                {
+                    string code = RelayNetworkManager.Instance.CurrentJoinCode;
+                    _stagingRoomTitleText.text = $"ODA KURULDU | Katılım Kodu: <color=#FFD700><b>{code}</b></color>";
+                }
+            }
+        }
+
+        private void HandleRelayJoinCodeReady(string code)
+        {
+            if (_stagingRoomTitleText != null)
+            {
+                _stagingRoomTitleText.text = $"ODA HAZIR | Katılım Kodu: <color=#FFD700><b>{code}</b></color>";
+            }
+            try { GUIUtility.systemCopyBuffer = code; } catch { }
+            ShowToast($"Katılım Kodu ({code}) Panoya Kopyalandı!");
+            Debug.Log($"[Lobby] Relay join kodu alındı ve panoya kopyalandı: {code}");
+        }
+
+        private void HandleRelayFailed(string error)
+        {
+            ShowToast($"Bağlantı hatası: {error}");
+            Debug.LogWarning($"[Lobby] Relay hatası: {error}");
+        }
+
+        private void HandleRelayServiceError(string error)
+        {
+            // Services not ready — LAN fallback, no need to show error to user
+            Debug.Log($"[Lobby] Relay servisi hazır değil (LAN modu kullanılıyor): {error}");
+        }
+
+        private void HandleRelayLobbyListUpdated(System.Collections.Generic.List<RelayRoomInfo> rooms)
+        {
+            // Merge Relay rooms into the existing room list UI
+            // Convert RelayRoomInfo to RoomInfo for existing RenderRoomList
+            var converted = new System.Collections.Generic.List<RoomInfo>();
+            foreach (var r in rooms)
+            {
+                converted.Add(new RoomInfo(
+                    r.LobbyId, r.JoinCode, r.LobbyName,
+                    r.JoinCode, // address = join code for Relay rooms
+                    7777,
+                    r.CurrentPlayers, r.MaxPlayers,
+                    r.TargetScore,
+                    r.IsPasswordProtected, "",
+                    r.PingMs, r.HostName
+                ));
+            }
+            if (converted.Count > 0)
+                RenderRoomList(converted);
         }
 
         private void HandleLeftLobby()
