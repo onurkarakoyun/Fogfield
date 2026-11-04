@@ -240,4 +240,37 @@ namespace AncientTree.Network
         public float G;
         public float B;
     }
+
+    public struct ClientRelocateRequestBroadcast : IBroadcast
+    {
+        public int PlayerIndex;
+        public int FromX;
+        public int FromY;
+    }
+
+    public struct ServerSettlementRelocatedBroadcast : IBroadcast
+    {
+        public int PlayerIndex;
+        public int FromX;
+        public int FromY;
+        public int ToX;
+        public int ToY;
+    }
+
+    /// <summary>LAN room advertisement (UDP broadcast, JSON via JsonUtility). Not a FishNet message.</summary>
+    [Serializable]
+    public class LanRoomAdvert
+    {
+        public string Magic = "FOGFIELD1";
+        public string RoomId;
+        public string RoomCode;
+        public string RoomName;
+        public string HostName;
+        public int Port;
+        public int CurrentPlayers;
+        public int MaxPlayers;
+        public int TargetScore;
+        public bool IsPasswordProtected;
+        public bool InMatch;
+    }
 }

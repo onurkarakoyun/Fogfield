@@ -100,6 +100,7 @@ namespace AncientTree.Network
                 _networkManager.ServerManager.RegisterBroadcast<ClientTileClickRequestBroadcast>(HandleClientTileClickRequestReceived);
                 _networkManager.ServerManager.RegisterBroadcast<ClientBuildSettlementRequestBroadcast>(HandleClientBuildSettlementRequestReceived);
                 _networkManager.ServerManager.RegisterBroadcast<ClientEndTurnRequestBroadcast>(HandleClientEndTurnRequestReceived);
+                _networkManager.ServerManager.RegisterBroadcast<ClientRelocateRequestBroadcast>(HandleClientRelocateRequestReceived);
             }
 
             // Client-side handlers
@@ -110,6 +111,7 @@ namespace AncientTree.Network
                 _networkManager.ClientManager.RegisterBroadcast<ServerSettlementBuiltBroadcast>(HandleServerSettlementBuiltReceived);
                 _networkManager.ClientManager.RegisterBroadcast<ServerTurnChangeBroadcast>(HandleServerTurnChangeReceived);
                 _networkManager.ClientManager.RegisterBroadcast<ServerVictoryBroadcast>(HandleServerVictoryReceived);
+                _networkManager.ClientManager.RegisterBroadcast<ServerSettlementRelocatedBroadcast>(HandleServerRelocatedReceived);
             }
 
             _broadcastsRegistered = true;
@@ -125,6 +127,7 @@ namespace AncientTree.Network
                 _networkManager.ServerManager.UnregisterBroadcast<ClientTileClickRequestBroadcast>(HandleClientTileClickRequestReceived);
                 _networkManager.ServerManager.UnregisterBroadcast<ClientBuildSettlementRequestBroadcast>(HandleClientBuildSettlementRequestReceived);
                 _networkManager.ServerManager.UnregisterBroadcast<ClientEndTurnRequestBroadcast>(HandleClientEndTurnRequestReceived);
+                _networkManager.ServerManager.UnregisterBroadcast<ClientRelocateRequestBroadcast>(HandleClientRelocateRequestReceived);
             }
 
             if (_networkManager.ClientManager != null)
@@ -134,6 +137,7 @@ namespace AncientTree.Network
                 _networkManager.ClientManager.UnregisterBroadcast<ServerSettlementBuiltBroadcast>(HandleServerSettlementBuiltReceived);
                 _networkManager.ClientManager.UnregisterBroadcast<ServerTurnChangeBroadcast>(HandleServerTurnChangeReceived);
                 _networkManager.ClientManager.UnregisterBroadcast<ServerVictoryBroadcast>(HandleServerVictoryReceived);
+                _networkManager.ClientManager.UnregisterBroadcast<ServerSettlementRelocatedBroadcast>(HandleServerRelocatedReceived);
             }
 
             _broadcastsRegistered = false;
@@ -178,8 +182,18 @@ namespace AncientTree.Network
             }
         }
 
+        /// <summary>A remote client may only act for the seat it owns (prevents spoofing another player's turn).</summary>
+        private static bool IsAuthorized(NetworkConnection conn, int playerIndex)
+        {
+            var mgr = FogfieldNetworkManager.Instance;
+            bool ok = mgr != null && conn != null && mgr.ConnectionControlsPlayer(conn.ClientId, playerIndex);
+            if (!ok) Debug.LogWarning($"[Network] Yetkisiz istek reddedildi (client {conn?.ClientId}, oyuncu {playerIndex}).");
+            return ok;
+        }
+
         private void HandleClientDiceRollRequestReceived(NetworkConnection conn, ClientDiceRollRequestBroadcast b, Channel channel)
         {
+            if (!IsAuthorized(conn, b.PlayerIndex)) return;
             ProcessServerDiceRoll(b.PlayerIndex);
         }
 
@@ -235,6 +249,7 @@ namespace AncientTree.Network
 
         private void HandleClientTileClickRequestReceived(NetworkConnection conn, ClientTileClickRequestBroadcast b, Channel channel)
         {
+            if (!IsAuthorized(conn, b.PlayerIndex)) return;
             ProcessServerTileClick(b.TargetX, b.TargetY, b.PlayerIndex);
         }
 
@@ -321,6 +336,7 @@ namespace AncientTree.Network
 
         private void HandleClientBuildSettlementRequestReceived(NetworkConnection conn, ClientBuildSettlementRequestBroadcast b, Channel channel)
         {
+            if (!IsAuthorized(conn, b.PlayerIndex)) return;
             ProcessServerBuildSettlement(b.PlayerIndex);
         }
 
@@ -362,6 +378,65 @@ namespace AncientTree.Network
         }
 
         // ====================================================================
+        // 3b. SETTLEMENT RELOCATION (Host Authoritative) — previously local-only, which desynced boards
+        // ====================================================================
+
+        public void CmdRequestRelocate(int playerIndex, Vector2Int from)
+        {
+            EnsureNetworkManager();
+            if (IsServer)
+            {
+                ProcessServerRelocate(playerIndex, from);
+            }
+            else if (IsClient)
+            {
+                _networkManager.ClientManager.Broadcast(new ClientRelocateRequestBroadcast
+                {
+                    PlayerIndex = playerIndex,
+                    FromX = from.x,
+                    FromY = from.y
+                });
+            }
+        }
+
+        private void HandleClientRelocateRequestReceived(NetworkConnection conn, ClientRelocateRequestBroadcast b, Channel channel)
+        {
+            if (!IsAuthorized(conn, b.PlayerIndex)) return;
+            ProcessServerRelocate(b.PlayerIndex, new Vector2Int(b.FromX, b.FromY));
+        }
+
+        private void ProcessServerRelocate(int playerIndex, Vector2Int from)
+        {
+            if (!IsServer || !_isOnlineMatchActive) return;
+            var tm = TurnManager.Instance;
+            if (tm == null || tm.ActivePlayerIndex != playerIndex) return;
+
+            var pawn = tm.ActivePawn;
+            var map = MapGenerator.Instance;
+            if (pawn == null || map == null || SettlementManager.Instance == null) return;
+
+            var fromTile = map.GetTile(from);
+            var toTile = map.GetTile(pawn.CurrentCoords);
+            if (fromTile == null || toTile == null) return;
+            if (!SettlementManager.Instance.CanRelocateSettlement(playerIndex, toTile)) return;
+            if (!SettlementManager.Instance.GetPlayerSettlements(playerIndex).Contains(fromTile)) return;
+
+            _networkManager.ServerManager.Broadcast(new ServerSettlementRelocatedBroadcast
+            {
+                PlayerIndex = playerIndex,
+                FromX = from.x,
+                FromY = from.y,
+                ToX = toTile.GridCoords.x,
+                ToY = toTile.GridCoords.y
+            }, true);
+        }
+
+        private void HandleServerRelocatedReceived(ServerSettlementRelocatedBroadcast b, Channel channel)
+        {
+            TurnManager.Instance?.ExecuteNetworkRelocation(new Vector2Int(b.FromX, b.FromY), new Vector2Int(b.ToX, b.ToY), b.PlayerIndex);
+        }
+
+        // ====================================================================
         // 4. END TURN & TURN CHANGING (Host Authoritative)
         // ====================================================================
 
@@ -380,6 +455,7 @@ namespace AncientTree.Network
 
         private void HandleClientEndTurnRequestReceived(NetworkConnection conn, ClientEndTurnRequestBroadcast b, Channel channel)
         {
+            if (!IsAuthorized(conn, b.PlayerIndex)) return;
             ProcessServerEndTurn(b.PlayerIndex);
         }
 

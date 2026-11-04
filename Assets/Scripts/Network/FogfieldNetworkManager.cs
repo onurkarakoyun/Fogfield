@@ -61,6 +61,15 @@ namespace AncientTree.Network
         // Discovered active rooms (no mock rooms)
         private readonly List<RoomInfo> _discoveredRooms = new List<RoomInfo>();
 
+        // LAN discovery (UDP broadcast). Without it, joining by room code only worked on the host's own PC.
+        private LanRoomDiscovery _discovery;
+
+        // Set while WE are deliberately disconnecting, so "Stopped" isn't reported as a connection error.
+        private bool _leavingIntentionally;
+        private bool _exitingMatch;
+
+        private bool IsMatchActive => NetworkTurnManager.Instance != null && NetworkTurnManager.Instance.IsOnlineMatchActive;
+
         private void Awake()
         {
             if (Instance != null && Instance != this)
@@ -80,6 +89,65 @@ namespace AncientTree.Network
         private void Start()
         {
             RegisterFishNetEvents();
+
+            _discovery = new LanRoomDiscovery();
+            _discovery.RoomFound += HandleDiscoveryServerFound;
+            _discovery.RoomLost += HandleDiscoveryServerLost;
+            _discovery.StartListening();
+        }
+
+        private void Update()
+        {
+            if (_discovery == null) return;
+            if (_isHostMode && _networkManager != null && _networkManager.IsServerStarted)
+                _discovery.SetAdvert(BuildAdvert());
+            else
+                _discovery.SetAdvert(null);
+            _discovery.Tick(Time.unscaledTime);
+        }
+
+        private LanRoomAdvert BuildAdvert()
+        {
+            var r = CurrentRoom;
+            return new LanRoomAdvert
+            {
+                RoomId = r.RoomId,
+                RoomCode = r.RoomCode,
+                RoomName = r.RoomName,
+                HostName = r.HostName,
+                Port = r.Port,
+                CurrentPlayers = r.CurrentPlayers,
+                MaxPlayers = r.MaxPlayers,
+                TargetScore = r.TargetScore,
+                IsPasswordProtected = r.IsPasswordProtected,
+                InMatch = IsMatchActive
+            };
+        }
+
+        /// <summary>
+        /// Server-side authority check: may this remote connection act for this player index?
+        /// (Host-local actions never come through here; they call the Process* methods directly.)
+        /// </summary>
+        public bool ConnectionControlsPlayer(int clientId, int playerIndex)
+        {
+            if (playerIndex < 0 || playerIndex >= PlayerSlots.Length) return false;
+            var slot = PlayerSlots[playerIndex];
+            return slot.IsOccupied && !slot.IsBot && slot.ClientId == clientId;
+        }
+
+        /// <summary>Leaves an in-progress online match and lands the player in the room browser with a message.</summary>
+        private void ExitMatchToLobby()
+        {
+            if (_exitingMatch) return;
+            var gm = GameManager.Instance;
+            if (gm == null || (gm.CurrentState != GameState.Gameplay && gm.CurrentState != GameState.GameOver)) return;
+            _exitingMatch = true;
+            try
+            {
+                gm.ReturnToMainMenu();
+                LobbyMenuController.Instance?.OpenLobby();
+            }
+            finally { _exitingMatch = false; }
         }
 
         private void RegisterFishNetEvents()
@@ -111,6 +179,9 @@ namespace AncientTree.Network
 
         private void OnDestroy()
         {
+            _discovery?.Dispose();
+            _discovery = null;
+
             if (_networkManager != null)
             {
                 if (_networkManager.ServerManager != null)
@@ -197,6 +268,8 @@ namespace AncientTree.Network
 
             // Configure Tugboat as server (listen on all interfaces) and local client
             ConfigureTugboat("127.0.0.1", port, asServer: true);
+
+            _leavingIntentionally = false;
 
             // Start Server & Client
             bool serverStarted = _networkManager.ServerManager.StartConnection();
@@ -320,6 +393,7 @@ namespace AncientTree.Network
 
             ConfigureTugboat(address, port, asServer: false);
 
+            _leavingIntentionally = false;
             bool clientStarted = _networkManager.ClientManager.StartConnection();
             if (clientStarted)
             {
@@ -339,6 +413,7 @@ namespace AncientTree.Network
         // --- Leave / Disconnect ---
         public void LeaveRoom()
         {
+            _leavingIntentionally = true;
             if (_networkManager != null)
             {
                 if (IsHost)
@@ -500,7 +575,7 @@ namespace AncientTree.Network
                     {
                         Reason = "Oda kurucusu tarafından odadan atıldınız."
                     }, false);
-                    conn.Disconnect(true);
+                    conn.Disconnect(false); // graceful: flush the reason message first
                 }
             }
 
@@ -664,7 +739,7 @@ namespace AncientTree.Network
                                 Message = "Hatalı Şifre! Odaya girilemedi."
                             }, false);
                         }
-                        conn.Disconnect(true);
+                        conn.Disconnect(false); // graceful: flush the reason message first
                         return;
                     }
                 }
@@ -681,7 +756,7 @@ namespace AncientTree.Network
                             AssignedSlotIndex = -1
                         }, false);
                     }
-                    conn.Disconnect(true);
+                    conn.Disconnect(false); // graceful: flush the reason message first
                     return;
                 }
 
@@ -811,9 +886,13 @@ namespace AncientTree.Network
                 CurrentRoom = msg.Room;
                 if (msg.Slots != null)
                 {
+                    int myId = LocalClientId;
                     for (int i = 0; i < 4 && i < msg.Slots.Length; i++)
                     {
                         PlayerSlots[i] = msg.Slots[i];
+                        // the server's slot table is the source of truth for which seat is ours
+                        if (myId >= 0 && msg.Slots[i].ClientId == myId && !msg.Slots[i].IsBot)
+                            _localPlayerSlotIndex = i;
                     }
                 }
 
@@ -855,6 +934,7 @@ namespace AncientTree.Network
             {
                 if (IsHost) return;
                 LeaveRoom();
+                ExitMatchToLobby();
                 OnKickedFromRoom?.Invoke(msg.Reason);
             }
             catch (System.Exception ex)
@@ -870,6 +950,7 @@ namespace AncientTree.Network
             {
                 if (IsHost) return;
                 LeaveRoom();
+                ExitMatchToLobby();
                 OnRoomDisbanded?.Invoke(msg.Reason);
             }
             catch (System.Exception ex)
@@ -902,6 +983,10 @@ namespace AncientTree.Network
                 return;
             }
 
+            // BUGFIX: the match uses player indices 0..N-1, but lobby seats can have gaps (e.g. seats 0 and 2).
+            // Compact occupied seats to the front and tell every moved client its new seat BEFORE the match starts.
+            botMask = CompactSlotsForMatch();
+
             int seed = UnityEngine.Random.Range(10000, 999999);
             var seedData = new NetworkMatchSeedData(seed, CurrentRoom.TargetScore, 24, 7, totalOccupied, botMask);
 
@@ -920,6 +1005,46 @@ namespace AncientTree.Network
             }
 
             OnMatchStartTriggered?.Invoke(seedData);
+        }
+
+        private int CompactSlotsForMatch()
+        {
+            var occupied = new List<NetworkPlayerSlotInfo>();
+            for (int i = 0; i < CurrentRoom.MaxPlayers && i < 4; i++)
+                if (PlayerSlots[i].IsOccupied) occupied.Add(PlayerSlots[i]);
+
+            int botMask = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                if (i < occupied.Count)
+                {
+                    var src = occupied[i];
+                    int oldIndex = src.SlotIndex;
+                    src.SlotIndex = i;
+                    PlayerSlots[i] = src;
+                    if (src.IsBot) botMask |= 1 << i;
+
+                    // notify a remote human whose seat moved (host is always seat 0 and never moves)
+                    if (oldIndex != i && !src.IsBot && !src.IsHost && _networkManager != null && _networkManager.IsServerStarted &&
+                        _networkManager.ServerManager.Clients.TryGetValue(src.ClientId, out NetworkConnection conn))
+                    {
+                        _networkManager.ServerManager.Broadcast(conn, new ServerJoinResultBroadcast
+                        {
+                            Success = true,
+                            Message = "Koltuk düzenlendi.",
+                            AssignedSlotIndex = i
+                        }, false);
+                    }
+                }
+                else
+                {
+                    PlayerSlots[i] = new NetworkPlayerSlotInfo(i, i < CurrentRoom.MaxPlayers ? "Boş Koltuk" : "[KAPALI]", -1, false, false, isOccupied: false);
+                }
+            }
+
+            BroadcastLobbyState(); // reliable + ordered: arrives before the match-start message
+            OnPlayerSlotsChanged?.Invoke(PlayerSlots);
+            return botMask;
         }
 
         private void HandleServerMatchStartReceived(ServerMatchStartBroadcast b, Channel channel)
@@ -946,7 +1071,12 @@ namespace AncientTree.Network
                     MapGenerator.Instance.GenerateMap(b.Seed);
                 }
 
-                // 4. Initialize players in TurnManager
+                // 4. Gameplay state + online routing must be live BEFORE the first turn starts
+                //    (TurnManager.StartTurn ignores calls outside Gameplay).
+                GameManager.Instance?.SetGameState(GameState.Gameplay);
+                NetworkTurnManager.Instance?.SetOnlineMatchActive(true);
+
+                // 5. Initialize players in TurnManager (starts turn 0)
                 if (TurnManager.Instance != null)
                 {
                     var slots = new List<PlayerSlotConfig>();
@@ -955,17 +1085,13 @@ namespace AncientTree.Network
                         bool isBot = (b.BotMask & (1 << i)) != 0;
                         PlayerSlotType slotType = isBot ? PlayerSlotType.Bot : PlayerSlotType.Human;
                         Color pColor = i < TurnManager.PlayerColors.Length ? TurnManager.PlayerColors[i] : Color.white;
-                        string name = isBot ? $"Bot {i + 1}" : (PlayerSlots != null && i < PlayerSlots.Length && PlayerSlots[i].IsOccupied ? PlayerSlots[i].PlayerName : $"Oyuncu {i + 1}");
+                        bool hasSlotName = PlayerSlots != null && i < PlayerSlots.Length && PlayerSlots[i].IsOccupied && !string.IsNullOrEmpty(PlayerSlots[i].PlayerName);
+                        string name = hasSlotName ? PlayerSlots[i].PlayerName : (isBot ? $"Bot {i + 1}" : $"Oyuncu {i + 1}");
                         slots.Add(new PlayerSlotConfig(i, slotType, pColor, name));
                     }
                     TurnManager.Instance.InitializeGame(slots);
                 }
 
-                // 5. Switch GameState to Gameplay (activates InGame_HUD, camera controls, etc.)
-                GameManager.Instance?.SetGameState(GameState.Gameplay);
-
-                // 6. Activate online state machine in NetworkTurnManager
-                NetworkTurnManager.Instance?.SetOnlineMatchActive(true);
             }
             catch (System.Exception ex)
             {
@@ -1004,14 +1130,23 @@ namespace AncientTree.Network
                 }
                 else if (args.ConnectionState == RemoteConnectionState.Stopped)
                 {
-                    // Free disconnected slot
                     for (int i = 1; i < 4; i++)
                     {
-                        if (PlayerSlots[i].ClientId == conn.ClientId)
+                        if (PlayerSlots[i].ClientId != conn.ClientId || PlayerSlots[i].IsBot) continue;
+
+                        if (IsMatchActive)
+                        {
+                            // BUGFIX: mid-match the seat must stay a player, or the match stalls on their turn.
+                            // A bot takes over (host simulates it).
+                            string name = PlayerSlots[i].PlayerName;
+                            PlayerSlots[i] = new NetworkPlayerSlotInfo(i, name + " (Bot)", -2, true, false);
+                            NetworkTurnManager.Instance?.HandlePlayerDisconnected(i);
+                        }
+                        else
                         {
                             PlayerSlots[i] = new NetworkPlayerSlotInfo(i, "Boş Koltuk", -1, false, false);
-                            break;
                         }
+                        break;
                     }
                     UpdateOccupiedPlayerCount();
                     BroadcastLobbyState();
@@ -1067,12 +1202,20 @@ namespace AncientTree.Network
                 }
                 else if (args.ConnectionState == LocalConnectionState.Stopped)
                 {
+                    bool wasIntentional = _leavingIntentionally;
+                    _leavingIntentionally = false;
                     _isHostMode = false;
-                    if (!IsHost)
+                    if (!IsHost && !wasIntentional)
                     {
+                        // Unexpected drop (host vanished, Wi-Fi lost, wrong IP...)
+                        bool wasInMatch = IsMatchActive;
+                        NetworkTurnManager.Instance?.SetOnlineMatchActive(false);
+                        _localPlayerSlotIndex = -1;
                         ResetSlots();
+                        if (wasInMatch) ExitMatchToLobby();
                         OnLeftLobby?.Invoke();
-                        OnConnectionFailed?.Invoke("Sunucuya bağlanılamadı veya bağlantı kesildi.\nKurucunun IP adresini ve güvenlik duvarını kontrol edin.");
+                        if (wasInMatch) OnConnectionFailed?.Invoke("Oyun sunucusuyla bağlantı koptu.");
+                        else OnConnectionFailed?.Invoke("Sunucuya bağlanılamadı veya bağlantı kesildi.\nKurucunun IP adresini ve güvenlik duvarını kontrol edin.");
                     }
                 }
             }

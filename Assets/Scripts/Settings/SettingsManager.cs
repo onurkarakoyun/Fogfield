@@ -22,6 +22,8 @@ namespace AncientTree.Settings
         private const string PrefsKeyResolutionWidth = "Settings_ResolutionWidth";
         private const string PrefsKeyResolutionHeight = "Settings_ResolutionHeight";
         private const string PrefsKeyFullscreen = "Settings_Fullscreen";
+        private const string PrefsKeyScreenShake = "Settings_ScreenShake";
+        private const string PrefsKeyReduceMotion = "Settings_ReduceMotion";
 
         [Header("Audio Settings (0-100)")]
         [Range(0f, 100f)] [SerializeField] private float _sfxVolume = 80f;
@@ -40,6 +42,17 @@ namespace AncientTree.Settings
         public Resolution[] UniqueResolutions { get; private set; }
         public int CurrentResolutionIndex { get; private set; } = 0;
         public bool IsFullscreen => _isFullscreen;
+
+        // --- Feel / accessibility ---
+        [Header("Feel & Accessibility")]
+        [SerializeField] private bool _screenShake = true;
+        [SerializeField] private bool _reduceMotion = false;
+
+        /// <summary>Camera shake on impacts. Off = no shake at all.</summary>
+        public bool ScreenShake => _screenShake;
+        /// <summary>Removes hit-stop and flashes, softens squash/stretch (motion & photosensitivity).</summary>
+        public bool ReduceMotion => _reduceMotion;
+        public static event Action OnFeelSettingsChanged;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void EnsureFullscreenOnStartup()
@@ -113,6 +126,8 @@ namespace AncientTree.Settings
             _sfxMuted = PlayerPrefs.GetInt(PrefsKeySfxMute, 0) == 1;
             _musicVolume = PlayerPrefs.GetFloat(PrefsKeyMusicVolume, 70f);
             _musicMuted = PlayerPrefs.GetInt(PrefsKeyMusicMute, 0) == 1;
+            _screenShake = PlayerPrefs.GetInt(PrefsKeyScreenShake, 1) == 1;
+            _reduceMotion = PlayerPrefs.GetInt(PrefsKeyReduceMotion, 0) == 1;
 
             // Display (Defaults: Fullscreen = true, Resolution = native screen resolution)
             _isFullscreen = PlayerPrefs.GetInt(PrefsKeyFullscreen, 1) == 1;
@@ -210,6 +225,22 @@ namespace AncientTree.Settings
             PlayerPrefs.SetInt(PrefsKeyMusicMute, _musicMuted ? 1 : 0);
             PlayerPrefs.Save();
             ApplyAudioSettings();
+        }
+
+        public void SetScreenShake(bool enabled)
+        {
+            _screenShake = enabled;
+            PlayerPrefs.SetInt(PrefsKeyScreenShake, enabled ? 1 : 0);
+            PlayerPrefs.Save();
+            OnFeelSettingsChanged?.Invoke();
+        }
+
+        public void SetReduceMotion(bool enabled)
+        {
+            _reduceMotion = enabled;
+            PlayerPrefs.SetInt(PrefsKeyReduceMotion, enabled ? 1 : 0);
+            PlayerPrefs.Save();
+            OnFeelSettingsChanged?.Invoke();
         }
 
         public void SetLanguage(string lang)

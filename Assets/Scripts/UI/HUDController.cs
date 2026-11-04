@@ -86,6 +86,165 @@ namespace AncientTree.UI
             public Tween RollingScoreTween;
             public Sequence FloatingTextSequence;
             public Tween FlashTween;
+            public RectTransform ProgressFill;
+            public Tween ProgressTween;
+        }
+
+        private static float Progress(int score) => Mathf.Clamp01(score / (float)Mathf.Max(1, TargetScore));
+
+        /// <summary>Player-colour bar along the bottom of each card showing progress to the target score.</summary>
+        private static RectTransform AddProgressBar(GameObject row, Color color, int score)
+        {
+            if (row == null) return null;
+            var bg = new GameObject("ProgressBg", typeof(RectTransform));
+            bg.transform.SetParent(row.transform, false);
+            bg.AddComponent<LayoutElement>().ignoreLayout = true;
+            var bgRt = (RectTransform)bg.transform;
+            bgRt.anchorMin = new Vector2(0f, 0f); bgRt.anchorMax = new Vector2(1f, 0f);
+            bgRt.pivot = new Vector2(0.5f, 0f);
+            bgRt.offsetMin = new Vector2(8f, 3f); bgRt.offsetMax = new Vector2(-8f, 9f);
+            var bgImg = bg.AddComponent<Image>();
+            bgImg.color = new Color(0f, 0f, 0f, 0.25f);
+            bgImg.raycastTarget = false;
+
+            var fill = new GameObject("ProgressFillColor", typeof(RectTransform)); // "Color" → theme keeps player colour
+            fill.transform.SetParent(bg.transform, false);
+            var fRt = (RectTransform)fill.transform;
+            fRt.anchorMin = Vector2.zero; fRt.anchorMax = new Vector2(Progress(score), 1f);
+            fRt.offsetMin = Vector2.zero; fRt.offsetMax = Vector2.zero;
+            var fImg = fill.AddComponent<Image>();
+            fImg.color = Color.Lerp(color, Color.white, 0.15f);
+            fImg.raycastTarget = false;
+            return fRt;
+        }
+
+        private static void SetProgress(ScoreRowUI row, int score, bool animate)
+        {
+            if (row?.ProgressFill == null) return;
+            row.ProgressTween?.Kill();
+            float target = Progress(score);
+            if (!animate) { row.ProgressFill.anchorMax = new Vector2(target, 1f); return; }
+            row.ProgressTween = DOTween.To(() => row.ProgressFill.anchorMax.x, x => row.ProgressFill.anchorMax = new Vector2(x, 1f), target, 0.6f)
+                .SetEase(Ease.OutCubic).SetLink(row.Root);
+        }
+
+        private static int TargetScore =>
+            AncientTree.Core.MatchConfig.Current != null ? AncientTree.Core.MatchConfig.Current.TargetScore : PlayerData.TargetScoreToWin;
+
+        /// <summary>Compact "12/50" — the old "12 / 50 Puan" didn't fit the row at a readable size.</summary>
+        private static string FormatScore(int score) => $"{score}/{TargetScore}";
+
+        /// <summary>
+        /// Layout fixes for the scene-built HUD: the dice/steps box was squeezed to 56 px and the bar had a fixed width,
+        /// so buttons overflowed once "Claim"/"Relocate" appeared. Bar now sizes to its content.
+        /// </summary>
+        private const float HudMargin = 14f;
+
+        /// <summary>Scoreboard card hugs its rows: 2 players → short card, 4 players → tall card.</summary>
+        private void ResizeScoreboardPanel()
+        {
+            var panel = _scoreboardContainer != null ? _scoreboardContainer.parent as RectTransform : null;
+            if (panel == null || panel.name != "ScoreboardPanel") return;
+            var vlg = _scoreboardContainer.GetComponent<VerticalLayoutGroup>();
+            float spacing = vlg != null ? vlg.spacing : 4f;
+            float pad = vlg != null ? vlg.padding.top + vlg.padding.bottom : 0f;
+            int n = Mathf.Max(1, _scoreRows.Count);
+            float rows = n * 46f + (n - 1) * spacing + pad;
+            panel.sizeDelta = new Vector2(panel.sizeDelta.x, 48f + rows + 12f);
+        }
+
+        private void PolishLayout()
+        {
+            if (_bottomBar == null) return;
+            var hlg = _bottomBar.GetComponent<HorizontalLayoutGroup>();
+            if (hlg != null)
+            {
+                hlg.spacing = 12f;
+                hlg.padding = new RectOffset(14, 14, 10, 12);
+                hlg.childAlignment = TextAnchor.MiddleCenter;
+            }
+            foreach (Transform child in _bottomBar.transform)
+            {
+                var le = child.GetComponent<LayoutElement>() ?? child.gameObject.AddComponent<LayoutElement>();
+                var rt = child as RectTransform;
+                bool isInfo = child.name.Contains("DiceInfo");
+                float w = isInfo ? 112f : 136f;
+                le.preferredWidth = w;
+                le.preferredHeight = 64f;
+                if (rt != null) rt.sizeDelta = new Vector2(w, 64f);
+            }
+            if (_diceResultText != null) _diceResultText.fontSize = 30f;
+            if (_remainingHpText != null)
+            {
+                _remainingHpText.fontSize = 15f;
+                _remainingHpText.enableAutoSizing = true;
+                _remainingHpText.fontSizeMin = 11f;
+                _remainingHpText.fontSizeMax = 15f;
+                var hrt = _remainingHpText.rectTransform;
+                hrt.sizeDelta = new Vector2(104f, hrt.sizeDelta.y);
+            }
+            if (_diceResultText != null)
+            {
+                var drt = _diceResultText.rectTransform;
+                drt.sizeDelta = new Vector2(104f, drt.sizeDelta.y);
+            }
+            var fitter = _bottomBar.GetComponent<ContentSizeFitter>() ?? _bottomBar.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            _bottomBar.GetComponent<RectTransform>().anchoredPosition = new Vector2(0f, HudMargin);
+
+            var hudRoot = _bottomBar.transform.parent;
+
+            // floating top bar: inset from the screen edges instead of glued to the top
+            var top = hudRoot.Find("TopBar") as RectTransform;
+            if (top != null)
+            {
+                top.sizeDelta = new Vector2(-HudMargin * 2f, 60f);
+                top.anchoredPosition = new Vector2(0f, -HudMargin - 30f);
+            }
+            var board = hudRoot.Find("ScoreboardPanel") as RectTransform;
+            if (board != null) board.anchoredPosition = new Vector2(HudMargin, -HudMargin * 2f - 60f);
+
+            // tile legend icons: cel-shaded to match the toon board
+            var toonMat = Resources.Load<Material>("Materials/UIToon"); // asset reference keeps the shader in builds
+            var legendRows = hudRoot.Find("TileLegendPanel/LegendRows");
+            if (toonMat != null && legendRows != null)
+            {
+                // tuned for ~24 px icons: fewer, cleaner bands and only strong ink edges
+                toonMat.SetFloat("_Steps", 6f);
+                toonMat.SetFloat("_Saturation", 1.3f);
+                toonMat.SetFloat("_InkThreshold", 0.22f);
+                toonMat.SetFloat("_InkWidth", 1f);
+                toonMat.SetFloat("_InkStrength", 0.7f);
+                foreach (var img in legendRows.GetComponentsInChildren<Image>(true))
+                    if (img.name == "Icon") img.material = toonMat;
+            }
+
+            // dice: real pips instead of numbers (big rolling die + the small result die in the bar)
+            var dieFace = hudRoot.Find("DiceRollingWidget/DiceVisualRoot") as RectTransform;
+            if (dieFace != null)
+            {
+                var faceImg = dieFace.GetComponent<Image>();
+                if (faceImg != null) faceImg.color = new Color(1f, 0.97f, 0.92f);
+                var num = dieFace.GetComponentInChildren<TextMeshProUGUI>(true);
+                DicePips.Attach(dieFace, num, new Color(0.24f, 0.14f, 0.3f), 0.2f);
+            }
+            if (_diceResultText != null)
+            {
+                var mini = new GameObject("MiniDie", typeof(RectTransform)).GetComponent<RectTransform>();
+                mini.SetParent(_diceResultText.transform.parent, false);
+                var trt = _diceResultText.rectTransform;
+                mini.anchorMin = trt.anchorMin; mini.anchorMax = trt.anchorMax; mini.pivot = trt.pivot;
+                mini.anchoredPosition = trt.anchoredPosition + new Vector2(0f, 4f);
+                mini.sizeDelta = new Vector2(34f, 34f);
+                var mImg = mini.gameObject.AddComponent<Image>();
+                mImg.sprite = AncientTree.UI.Theme.CuteTheme.RoundedSprite;
+                mImg.type = Image.Type.Sliced;
+                mImg.pixelsPerUnitMultiplier = 3f;
+                mImg.color = new Color(1f, 0.97f, 0.92f);
+                mImg.raycastTarget = false;
+                DicePips.Attach(mini, _diceResultText, new Color(0.24f, 0.14f, 0.3f), 0.22f);
+            }
         }
 
         private void Awake()
@@ -97,6 +256,9 @@ namespace AncientTree.UI
             }
             Instance = this;
 
+            PolishLayout();
+            if (_rollDiceButton != null && _rollDiceButton.GetComponent<AttentionPulse>() == null)
+                _rollDiceButton.gameObject.AddComponent<AttentionPulse>();
             SetupButtonListeners();
             RefreshButtonLabels();
             if (_victoryPopup != null) _victoryPopup.SetActive(false);
@@ -297,7 +459,14 @@ namespace AncientTree.UI
         private void HandlePlayerTurnStarted(int playerIndex, string playerName, Color playerColor)
         {
             UpdateOnlineRoomBadge();
-            if (_playerColorBanner != null) _playerColorBanner.color = playerColor;
+            if (_playerColorBanner != null)
+            {
+                // ease the banner into the new player's colour and give it a small "your turn" pop
+                _playerColorBanner.DOKill();
+                _playerColorBanner.DOColor(playerColor, 0.3f).SetEase(Ease.OutCubic).SetLink(_playerColorBanner.gameObject);
+                _playerColorBanner.transform.DOKill(true);
+                _playerColorBanner.transform.DOPunchScale(new Vector3(0.06f, 0.18f, 0f), 0.35f, 6, 0.6f).SetLink(_playerColorBanner.gameObject);
+            }
             if (_playerTurnText != null)
             {
                 bool isOnline = AncientTree.Network.FogfieldNetworkManager.Instance != null &&
@@ -440,6 +609,11 @@ namespace AncientTree.UI
         {
             string msg = LocalizationManager.Instance?.Get("MOUNTAIN_BLOCKED") ?? "Geçilmez Dağ! Geri sektiniz.";
             ShowAlert(msg, new Color(1f, 0.3f, 0.3f, 0.95f));
+            if (_alertBanner != null && !AncientTree.Feel.FeedbackDirector.ReduceMotion)
+            {
+                // a "denied" head-shake reads as blocked without needing to read the text
+                _alertBanner.transform.DOShakePosition(0.35f, new Vector3(14f, 0f, 0f), 18, 0f, false, true).SetLink(_alertBanner);
+            }
         }
 
         private void HandleRelocationPrompt(bool active)
@@ -485,11 +659,7 @@ namespace AncientTree.UI
         private void HandleRoundChanged(int round)
         {
             UpdateScoreboardTitle(round);
-            if (round > 1)
-            {
-                string msg = LocalizationManager.Instance?.Get("ROUND_COMPLETED_MSG", round - 1) ?? $"Raunt {round - 1} Tamamlandı! Gelirler Eklendi.";
-                ShowAlert(msg, new Color(0.18f, 0.55f, 0.95f, 0.95f));
-            }
+            // round announcement is shown by the TurnBanner ribbon
         }
 
         private void UpdateScoreboardTitle(int round)
@@ -525,7 +695,7 @@ namespace AncientTree.UI
             {
                 string winnerSimple = LocalizationManager.Instance?.Get("VICTORY_WINNER_SIMPLE", winnerName) ?? $"{winnerName} Kazandı!";
                 string pointUnit = LocalizationManager.Instance?.Get("SCORE_UNIT") ?? "Puan";
-                _victoryWinnerText.text = $"{winnerSimple}\n({finalScore} / {PlayerData.TargetScoreToWin} {pointUnit})";
+                _victoryWinnerText.text = $"{winnerSimple}\n({finalScore} / {TargetScore} {pointUnit})";
             }
 
             if (_victoryColorAccent != null) _victoryColorAccent.color = winnerColor;
@@ -720,11 +890,13 @@ namespace AncientTree.UI
                     string yFormat = LocalizationManager.Instance?.Get("YIELD_FORMAT") ?? "+{0}/Tur";
                     yieldTxt.text = string.Format(yFormat, yield);
                 }
-                if (scoreTxt != null) scoreTxt.text = $"{player.TotalScore} / {PlayerData.TargetScoreToWin} {pointUnit}";
+                if (scoreTxt != null) scoreTxt.text = FormatScore(player.TotalScore);
                 if (activeBorder != null) activeBorder.SetActive(i == activeIdx);
 
+                var progressFill = AddProgressBar(rowObj, player.PlayerColor, player.TotalScore);
                 _scoreRows.Add(new ScoreRowUI
                 {
+                    ProgressFill = progressFill,
                     Root = rowObj,
                     ColorIndicator = img,
                     NameText = nameTxt,
@@ -738,6 +910,13 @@ namespace AncientTree.UI
                 });
             }
         }
+
+        private void LateUpdate()
+        {
+            // cheap: keep the scoreboard card fitted to however many rows exist
+            if (_scoreRows.Count != _lastRowCount) { _lastRowCount = _scoreRows.Count; ResizeScoreboardPanel(); }
+        }
+        private int _lastRowCount = -1;
 
         public void RefreshAllScoreboardRows()
         {
@@ -763,6 +942,7 @@ namespace AncientTree.UI
                 if (row.FloatingGainText != null) row.FloatingGainText.gameObject.SetActive(false);
 
                 row.CurrentScore = player.TotalScore;
+                SetProgress(row, player.TotalScore, false);
 
                 if (row.ColorIndicator != null) row.ColorIndicator.color = player.PlayerColor;
                 if (row.NameText != null) row.NameText.text = player.PlayerName;
@@ -782,7 +962,7 @@ namespace AncientTree.UI
 
                 if (row.ScoreText != null)
                 {
-                    row.ScoreText.text = $"{player.TotalScore} / {PlayerData.TargetScoreToWin} {pointUnit}";
+                    row.ScoreText.text = FormatScore(player.TotalScore);
                 }
             }
         }
@@ -808,7 +988,7 @@ namespace AncientTree.UI
                     {
                         if (row.ScoreText != null)
                         {
-                            row.ScoreText.text = $"{val} / {PlayerData.TargetScoreToWin} {pointUnit}";
+                            row.ScoreText.text = FormatScore(val);
                         }
                     }).SetEase(Ease.OutQuad).SetLink(row.Root);
 
@@ -863,11 +1043,12 @@ namespace AncientTree.UI
 
                     if (row.ScoreText != null)
                     {
-                        row.ScoreText.text = $"{score} / {PlayerData.TargetScoreToWin} {pointUnit}";
+                        row.ScoreText.text = FormatScore(score);
                     }
                 }
 
                 row.CurrentScore = score;
+                SetProgress(row, score, diff > 0);
 
                 if (row.SettlementText != null && SettlementManager.Instance != null)
                 {
@@ -890,11 +1071,11 @@ namespace AncientTree.UI
         {
             GameObject row = new GameObject("ScoreRow");
             var rt = row.AddComponent<RectTransform>();
-            rt.sizeDelta = new Vector2(360, 32);
+            rt.sizeDelta = new Vector2(360, 46);
 
             var le = row.AddComponent<LayoutElement>();
-            le.minHeight = 32f;
-            le.preferredHeight = 32f;
+            le.minHeight = 46f;
+            le.preferredHeight = 46f;
             le.flexibleWidth = 1f;
 
             // Row dark background
@@ -925,34 +1106,36 @@ namespace AncientTree.UI
             abRt.anchorMax = Vector2.one;
             abRt.sizeDelta = Vector2.zero;
             var abImg = activeBorder.AddComponent<Image>();
-            abImg.color = new Color(1f, 0.85f, 0.2f, 0.22f);
+            abImg.color = new Color(color.r, color.g, color.b, 0.28f); // soft glow in the player's colour
             abImg.raycastTarget = false;
             var abLe = activeBorder.AddComponent<LayoutElement>();
             abLe.ignoreLayout = true;
 
-            // Active left accent indicator bar
-            GameObject leftBar = new GameObject("ActiveLeftBar");
-            leftBar.transform.SetParent(activeBorder.transform, false);
-            var lbRt = leftBar.AddComponent<RectTransform>();
-            lbRt.anchorMin = new Vector2(0f, 0f);
-            lbRt.anchorMax = new Vector2(0f, 1f);
-            lbRt.anchoredPosition = new Vector2(2f, 0f);
-            lbRt.sizeDelta = new Vector2(4f, 0f);
-            var lbImg = leftBar.AddComponent<Image>();
-            lbImg.color = new Color(1f, 0.85f, 0.2f, 1f);
-            lbImg.raycastTarget = false;
+            // (the old yellow vertical "active" bar is gone — the row glows in the player's colour instead)
 
             // Badge (Color indicator)
             GameObject badge = new GameObject("ColorBadge");
             badge.transform.SetParent(row.transform, false);
             var bRt = badge.AddComponent<RectTransform>();
-            bRt.sizeDelta = new Vector2(14f, 14f);
+            bRt.sizeDelta = new Vector2(26f, 26f);
             colorImg = badge.AddComponent<Image>();
             colorImg.color = color;
             colorImg.raycastTarget = false;
+            var initial = new GameObject("InitialText", typeof(RectTransform)).AddComponent<TextMeshProUGUI>();
+            initial.transform.SetParent(badge.transform, false);
+            initial.rectTransform.anchorMin = Vector2.zero; initial.rectTransform.anchorMax = Vector2.one;
+            initial.rectTransform.sizeDelta = Vector2.zero;
+            initial.text = string.IsNullOrEmpty(playerName) ? "?" : playerName.Substring(0, 1).ToUpperInvariant();
+            initial.fontSize = 15f;
+            initial.fontStyle = FontStyles.Bold;
+            initial.alignment = TextAlignmentOptions.Center;
+            initial.color = Color.white;
+            initial.overflowMode = TextOverflowModes.Overflow;
+            initial.textWrappingMode = TextWrappingModes.NoWrap;
+            initial.raycastTarget = false;
             var bLe = badge.AddComponent<LayoutElement>();
-            bLe.preferredWidth = 14f;
-            bLe.preferredHeight = 14f;
+            bLe.preferredWidth = 26f;
+            bLe.preferredHeight = 26f;
 
             // Name (Flexible width with Ellipsis overflow)
             GameObject nameObj = new GameObject("NameText");
@@ -961,7 +1144,7 @@ namespace AncientTree.UI
             nRt.sizeDelta = new Vector2(100f, 26f);
             nameTxt = nameObj.AddComponent<TextMeshProUGUI>();
             nameTxt.text = playerName;
-            nameTxt.fontSize = 12f;
+            nameTxt.fontSize = 16f;
             nameTxt.fontStyle = FontStyles.Bold;
             nameTxt.alignment = TextAlignmentOptions.MidlineLeft;
             nameTxt.color = Color.white;
@@ -969,7 +1152,7 @@ namespace AncientTree.UI
             nameTxt.overflowMode = TextOverflowModes.Ellipsis;
             nameTxt.raycastTarget = false;
             var nLe = nameObj.AddComponent<LayoutElement>();
-            nLe.preferredWidth = 100f;
+            nLe.preferredWidth = 80f;
             nLe.flexibleWidth = 1f;
 
             // Settlement Counter Text (e.g. 3/5)
@@ -979,14 +1162,14 @@ namespace AncientTree.UI
             stRt.sizeDelta = new Vector2(46f, 26f);
             settTxt = settObj.AddComponent<TextMeshProUGUI>();
             settTxt.text = $"{settlements}/{PlayerData.MaxSettlements}";
-            settTxt.fontSize = 11.5f;
+            settTxt.fontSize = 15f;
             settTxt.fontStyle = FontStyles.Normal;
             settTxt.alignment = TextAlignmentOptions.Center;
             settTxt.color = new Color(0.7f, 0.85f, 1f);
             settTxt.textWrappingMode = TextWrappingModes.NoWrap;
             settTxt.raycastTarget = false;
             var stLe = settObj.AddComponent<LayoutElement>();
-            stLe.preferredWidth = 46f;
+            stLe.preferredWidth = 50f;
 
             // Yield Text (e.g. +3/Tur)
             GameObject yieldObj = new GameObject("YieldText");
@@ -996,14 +1179,14 @@ namespace AncientTree.UI
             yieldTxt = yieldObj.AddComponent<TextMeshProUGUI>();
             string yFormat = LocalizationManager.Instance?.Get("YIELD_FORMAT") ?? "+{0}/Tur";
             yieldTxt.text = string.Format(yFormat, yield);
-            yieldTxt.fontSize = 11.5f;
+            yieldTxt.fontSize = 15f;
             yieldTxt.fontStyle = FontStyles.Bold;
             yieldTxt.alignment = TextAlignmentOptions.Center;
             yieldTxt.color = new Color(0.35f, 0.95f, 0.55f);
             yieldTxt.textWrappingMode = TextWrappingModes.NoWrap;
             yieldTxt.raycastTarget = false;
             var yLe = yieldObj.AddComponent<LayoutElement>();
-            yLe.preferredWidth = 56f;
+            yLe.preferredWidth = 68f;
 
             // Score Text (e.g. 12 / 50 Puan)
             GameObject scoreObj = new GameObject("ScoreText");
@@ -1011,15 +1194,15 @@ namespace AncientTree.UI
             var sRt = scoreObj.AddComponent<RectTransform>();
             sRt.sizeDelta = new Vector2(96f, 26f);
             scoreTxt = scoreObj.AddComponent<TextMeshProUGUI>();
-            scoreTxt.text = $"{score} / {PlayerData.TargetScoreToWin} {pointUnit}";
-            scoreTxt.fontSize = 12f;
+            scoreTxt.text = FormatScore(score);
+            scoreTxt.fontSize = 17f;
             scoreTxt.fontStyle = FontStyles.Bold;
             scoreTxt.alignment = TextAlignmentOptions.MidlineRight;
             scoreTxt.color = new Color(1f, 0.85f, 0.2f);
             scoreTxt.textWrappingMode = TextWrappingModes.NoWrap;
             scoreTxt.raycastTarget = false;
             var sLe = scoreObj.AddComponent<LayoutElement>();
-            sLe.preferredWidth = 96f;
+            sLe.preferredWidth = 72f;
 
             // Floating Gain Text (Popup animation on score increase, ignored by layout)
             GameObject floatObj = new GameObject("FloatingGainText");
@@ -1033,7 +1216,7 @@ namespace AncientTree.UI
             var fgLe = floatObj.AddComponent<LayoutElement>();
             fgLe.ignoreLayout = true;
             floatingGainTxt = floatObj.AddComponent<TextMeshProUGUI>();
-            floatingGainTxt.fontSize = 13;
+            floatingGainTxt.fontSize = 18;
             floatingGainTxt.fontStyle = FontStyles.Bold;
             floatingGainTxt.alignment = TextAlignmentOptions.MidlineRight;
             floatingGainTxt.color = new Color(1f, 0.88f, 0.25f, 1f);

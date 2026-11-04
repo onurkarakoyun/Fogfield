@@ -557,6 +557,38 @@ namespace AncientTree.Board
             }
         }
 
+        // ------------------------------------------------------------------ stuck-move watchdog
+        private float _moveLockSince = -1f;
+
+        /// <summary>
+        /// Safety net: if a local move has been action-locked for 3 s and nothing is animating the pawn any more,
+        /// the completion callback was lost. Snap the pawn onto its tile and finish the step so the turn can go on.
+        /// </summary>
+        private void Update()
+        {
+            bool watching = _isActionLocked && _currentPhase == TurnPhase.Moving && !IsOnline &&
+                            (GameManager.Instance == null || GameManager.Instance.CurrentState == GameState.Gameplay);
+            if (!watching) { _moveLockSince = -1f; return; }
+            if (_moveLockSince < 0f) { _moveLockSince = Time.time; return; }
+            if (Time.time - _moveLockSince < 3f) return;
+
+            var pawn = ActivePawn;
+            if (pawn == null || DG.Tweening.DOTween.IsTweening(pawn.transform)) return;
+            var tile = _mapGenerator != null ? _mapGenerator.GetTile(pawn.CurrentCoords) : null;
+            if (tile != null && DG.Tweening.DOTween.IsTweening(tile.transform)) return;
+
+            Debug.LogWarning("[TurnManager] Stuck move detected (lost tween callback) — recovering.");
+            _moveLockSince = -1f;
+            if (tile != null)
+            {
+                Vector3 stand = tile.GetPawnStandPosition();
+                if (pawn.CurrentCoords == MapGenerator.CenterCoords) stand += GetPawnCenterOffset(_activePlayerIndex, _playerCount);
+                pawn.transform.position = stand;
+                if (ActivePlayer != null) ActivePlayer.CurrentCoordinates = pawn.CurrentCoords;
+            }
+            DeductMovementPoint();
+        }
+
         private void DeductMovementPoint()
         {
             _remainingMovementPoints--;
@@ -676,6 +708,13 @@ namespace AncientTree.Board
             if (currentTile == null) return;
 
             var playerSettlements = SettlementManager.Instance.GetPlayerSettlements(_activePlayerIndex);
+            if (playerSettlements.Contains(clickedTile) && IsOnline)
+            {
+                // Online: ask the host; every peer applies it when the confirmation arrives.
+                AncientTree.Network.NetworkTurnManager.Instance?.CmdRequestRelocate(_activePlayerIndex, clickedTile.GridCoords);
+                CancelRelocationMode();
+                return;
+            }
             if (playerSettlements.Contains(clickedTile))
             {
                 // Dismantle this settlement and move it to currentTile
@@ -703,7 +742,13 @@ namespace AncientTree.Board
             if (_isActionLocked) return;
 
             // Check if standing on another pawn
-            if (ActivePawn != null && IsTileOccupiedByOtherPawn(ActivePawn.CurrentCoords, _activePlayerIndex))
+            // BUGFIX (soft-lock): "you may not END on another pawn" is already enforced when choosing the last step
+            // (HandleMovementClick / HasReachableNeighbors). A pawn can still be FORCED onto a shared tile — bouncing
+            // back off a mountain onto a tile it was passing through, or running out of legal steps there. Blocking
+            // End Turn in that case left the player with no moves and no way to finish the turn. Only block while
+            // the player still has a legal move to get off the tile.
+            if (ActivePawn != null && IsTileOccupiedByOtherPawn(ActivePawn.CurrentCoords, _activePlayerIndex) &&
+                _currentPhase == TurnPhase.Moving && _remainingMovementPoints > 0 && HasReachableNeighbors())
             {
                 return;
             }
@@ -769,41 +814,26 @@ namespace AncientTree.Board
             }
             else
             {
-                // Process Round End Yield & Scoring
-                for (int i = 0; i < _players.Count; i++)
-                {
-                    var player = _players[i];
-                    if (player == null) continue;
-
-                    int yield = SettlementManager.Instance != null ? SettlementManager.Instance.CalculatePlayerSettlementYield(player.PlayerIndex) : 0;
-                    player.RoundYield = yield;
-                    player.TotalScore += yield;
-
-                    GameEvents.TriggerPlayerYieldUpdated(player.PlayerIndex, player.RoundYield);
-                    GameEvents.TriggerPlayerScoreUpdated(player.PlayerIndex, player.TotalScore);
-                }
-
-                // Victory check
-                List<PlayerData> potentialWinners = new List<PlayerData>();
+                // Round end. BUGFIX: yields are applied ONLY when every peer (host included) receives the
+                // TurnChange / Victory broadcast. Here we just project the scores to decide the outcome.
+                PlayerData winner = null;
+                int winnerScore = int.MinValue, winnerYield = int.MinValue;
+                int target = AncientTree.Core.MatchConfig.Current != null ? AncientTree.Core.MatchConfig.Current.TargetScore : PlayerData.TargetScoreToWin;
                 foreach (var p in _players)
                 {
-                    if (p.TotalScore >= AncientTree.Core.MatchConfig.Current.TargetScore)
+                    if (p == null) continue;
+                    int yield = SettlementManager.Instance != null ? SettlementManager.Instance.CalculatePlayerSettlementYield(p.PlayerIndex) : 0;
+                    int projected = p.TotalScore + yield;
+                    if (projected < target) continue;
+                    if (projected > winnerScore || (projected == winnerScore && yield > winnerYield))
                     {
-                        potentialWinners.Add(p);
+                        winner = p; winnerScore = projected; winnerYield = yield;
                     }
                 }
 
-                if (potentialWinners.Count > 0)
+                if (winner != null)
                 {
-                    potentialWinners.Sort((a, b) =>
-                    {
-                        int comp = b.TotalScore.CompareTo(a.TotalScore);
-                        if (comp != 0) return comp;
-                        return b.RoundYield.CompareTo(a.RoundYield);
-                    });
-
-                    var winner = potentialWinners[0];
-                    AncientTree.Network.NetworkTurnManager.Instance?.BroadcastVictory(winner.PlayerIndex, winner.TotalScore, winner.PlayerName, winner.PlayerColor);
+                    AncientTree.Network.NetworkTurnManager.Instance?.BroadcastVictory(winner.PlayerIndex, winnerScore, winner.PlayerName, winner.PlayerColor);
                     return;
                 }
 
@@ -821,29 +851,53 @@ namespace AncientTree.Board
         {
             if (_currentRound != round)
             {
+                ApplyRoundYields();
                 _currentRound = round;
                 GameEvents.TriggerRoundChanged(_currentRound);
-
-                if (SettlementManager.Instance != null)
-                {
-                    for (int i = 0; i < _players.Count; i++)
-                    {
-                        var player = _players[i];
-                        if (player == null) continue;
-                        int yield = SettlementManager.Instance.CalculatePlayerSettlementYield(player.PlayerIndex);
-                        player.RoundYield = yield;
-                        player.TotalScore += yield;
-                        GameEvents.TriggerPlayerYieldUpdated(player.PlayerIndex, player.RoundYield);
-                        GameEvents.TriggerPlayerScoreUpdated(player.PlayerIndex, player.TotalScore);
-                    }
-                }
             }
 
             StartTurn(nextPlayerIndex);
         }
 
+        /// <summary>Adds each player's settlement income to their score (once per round, on every peer).</summary>
+        private void ApplyRoundYields()
+        {
+            if (SettlementManager.Instance == null) return;
+            for (int i = 0; i < _players.Count; i++)
+            {
+                var player = _players[i];
+                if (player == null) continue;
+                int yield = SettlementManager.Instance.CalculatePlayerSettlementYield(player.PlayerIndex);
+                player.RoundYield = yield;
+                player.TotalScore += yield;
+                GameEvents.TriggerPlayerYieldUpdated(player.PlayerIndex, player.RoundYield);
+                GameEvents.TriggerPlayerScoreUpdated(player.PlayerIndex, player.TotalScore);
+            }
+        }
+
+        /// <summary>Applies a host-confirmed settlement relocation on every peer.</summary>
+        public void ExecuteNetworkRelocation(Vector2Int from, Vector2Int to, int playerIndex)
+        {
+            var fromTile = _mapGenerator != null ? _mapGenerator.GetTile(from) : null;
+            var toTile = _mapGenerator != null ? _mapGenerator.GetTile(to) : null;
+            var player = GetPlayer(playerIndex);
+            if (fromTile == null || toTile == null || player == null || SettlementManager.Instance == null) return;
+
+            Color pColor = playerIndex < PlayerColors.Length ? PlayerColors[playerIndex] : player.PlayerColor;
+            if (!SettlementManager.Instance.RelocateSettlement(playerIndex, pColor, fromTile, toTile)) return;
+
+            player.RemoveSettlement(from);
+            player.AddSettlement(to);
+            player.RoundYield = SettlementManager.Instance.CalculatePlayerSettlementYield(playerIndex);
+            GameEvents.TriggerPlayerYieldUpdated(playerIndex, player.RoundYield);
+            GameEvents.TriggerPlayerScoreUpdated(playerIndex, player.TotalScore);
+            if (_isRelocating) CancelRelocationMode();
+        }
+
         public void ExecuteNetworkVictory(int winnerIndex, int winnerScore, string winnerName, Color winnerColor)
         {
+            // Victory is only decided at round end: apply that final round's income so every scoreboard matches.
+            ApplyRoundYields();
             _isActionLocked = true;
             _currentPhase = TurnPhase.TurnEnd;
             ClearAllTileHighlights();
@@ -1052,10 +1106,13 @@ namespace AncientTree.Board
                 while (_currentPhase == TurnPhase.Moving && _remainingMovementPoints > 0 && IsBotTurnValid(currentTurnPlayerIndex))
                 {
                     // Wait for any running animation / lock to release
-                    while (_isActionLocked && IsBotTurnValid(currentTurnPlayerIndex))
+                    float lockWait = 4f; // never wait forever on a lock
+                    while (_isActionLocked && lockWait > 0f && IsBotTurnValid(currentTurnPlayerIndex))
                     {
+                        lockWait -= Time.deltaTime;
                         yield return null;
                     }
+                    if (_isActionLocked) break;
                     if (!IsBotTurnValid(currentTurnPlayerIndex) || _currentPhase != TurnPhase.Moving || _remainingMovementPoints <= 0) break;
 
                     // Brief step pause for natural cadence
@@ -1308,7 +1365,11 @@ namespace AncientTree.Board
                         }
 
                         // Relocate if the new tile is strictly better than the lowest owned tile
-                        if (lowestTile != null && lowestValue < currentTile.PointValue)
+                        if (lowestTile != null && lowestValue < currentTile.PointValue && IsOnline)
+                        {
+                            AncientTree.Network.NetworkTurnManager.Instance?.CmdRequestRelocate(_activePlayerIndex, lowestTile.GridCoords);
+                        }
+                        else if (lowestTile != null && lowestValue < currentTile.PointValue)
                         {
                             bool success = SettlementManager.Instance.RelocateSettlement(_activePlayerIndex, player.PlayerColor, lowestTile, currentTile);
                             if (success)

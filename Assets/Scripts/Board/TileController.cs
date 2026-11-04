@@ -218,6 +218,7 @@ namespace AncientTree.Board
 
             flipSeq.InsertCallback(0.18f, () =>
             {
+                AncientTree.Feel.VfxDirector.Instance?.Reveal(_basePosition);
                 if (_fogCoverRenderer != null) _fogCoverRenderer.enabled = false;
                 if (_pointsText != null) _pointsText.gameObject.SetActive(true);
                 if (_nameText != null) _nameText.gameObject.SetActive(true);
@@ -233,6 +234,11 @@ namespace AncientTree.Board
         /// Highlights tile for movement reachability or relocation.
         /// Uses MaterialPropertyBlock and surface overlay with high-opacity punchy lime green.
         /// </summary>
+        /// <summary>True while the tile is offered as a move / relocation target.</summary>
+        public bool IsHighlighted => _highlightObject != null && _highlightObject.activeSelf;
+        /// <summary>The flippable model (child). Safe to nudge for hover feedback; gameplay uses the root transform.</summary>
+        public Transform VisualTransform => _tileVisualTransform;
+
         public void SetHighlight(bool active, Color highlightColor = default)
         {
             _highlightTween?.Kill();
@@ -243,7 +249,7 @@ namespace AncientTree.Board
             {
                 var rend = _highlightObject.GetComponent<MeshRenderer>();
                 // Punchy, vivid neon lime green with 0.72 alpha
-                Color baseCol = highlightColor != default ? highlightColor : new Color(0.20f, 1.0f, 0.30f, 0.72f);
+                Color baseCol = highlightColor != default ? highlightColor : new Color(0.55f, 0.95f, 0.78f, 0.62f); // soft candy mint
 
                 float minA = Mathf.Clamp(baseCol.a * 0.75f, 0.50f, 0.70f);
                 float maxA = Mathf.Clamp(baseCol.a, 0.70f, 0.85f);
@@ -271,9 +277,9 @@ namespace AncientTree.Board
                 {
                     if (_karoPropBlock == null) _karoPropBlock = new MaterialPropertyBlock();
                     _topFaceRenderer.GetPropertyBlock(_karoPropBlock);
-                    Color tint = Color.Lerp(Color.white, baseCol, 0.45f);
+                    Color tint = Color.Lerp(Color.white, baseCol, 0.25f);
                     _karoPropBlock.SetColor("_BaseColor", tint);
-                    _karoPropBlock.SetColor("_EmissionColor", new Color(0.20f, 0.95f, 0.30f) * 1.5f);
+                    _karoPropBlock.SetColor("_EmissionColor", new Color(0.35f, 0.75f, 0.55f) * 0.6f);
                     _topFaceRenderer.SetPropertyBlock(_karoPropBlock);
                 }
             }
@@ -317,11 +323,9 @@ namespace AncientTree.Board
                 if (renderers != null && renderers.Length > 0)
                 {
                     if (_territoryPropBlock == null) _territoryPropBlock = new MaterialPropertyBlock();
-                    float alpha = 0f;
-                    _territoryTween = DOTween.To(() => alpha, a =>
+                    void ApplyBorder(float a)
                     {
-                        alpha = a;
-                        Color c = new Color(resolvedColor.r, resolvedColor.g, resolvedColor.b, alpha);
+                        Color c = new Color(resolvedColor.r, resolvedColor.g, resolvedColor.b, a);
                         foreach (var rend in renderers)
                         {
                             if (rend == null) continue;
@@ -331,9 +335,18 @@ namespace AncientTree.Board
                             _territoryPropBlock.SetColor("_EmissionColor", resolvedColor * 0.8f);
                             rend.SetPropertyBlock(_territoryPropBlock);
                         }
-                    }, 1.0f, 0.25f)
-                    .SetEase(Ease.OutQuad)
-                    .SetLink(_territoryOverlayObject);
+                    }
+
+                    // BUGFIX ("black border"): the shared TerritoryMaterial is near-black. The player colour only
+                    // existed inside the fade tween, so if that tween was killed before its first update the frame
+                    // rendered black. Apply the colour immediately, and always land on full colour however the
+                    // tween ends (complete or killed).
+                    ApplyBorder(0f);
+                    float alpha = 0f;
+                    _territoryTween = DOTween.To(() => alpha, a => { alpha = a; ApplyBorder(a); }, 1.0f, 0.25f)
+                        .SetEase(Ease.OutQuad)
+                        .SetLink(_territoryOverlayObject)
+                        .OnKill(() => { if (HasSettlement && _territoryOverlayObject != null) ApplyBorder(1f); });
                 }
             }
 

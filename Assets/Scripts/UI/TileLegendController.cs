@@ -18,7 +18,7 @@ namespace AncientTree.UI
         [SerializeField] private TextMeshProUGUI _toggleButtonText;
 
         [Header("Animation Settings")]
-        [SerializeField] private float _expandedX = -15f;
+        [SerializeField] private float _expandedX = -14f;
         [SerializeField] private float _collapsedX = 275f;
         [SerializeField] private float _animDuration = 0.28f;
 
@@ -38,7 +38,7 @@ namespace AncientTree.UI
             {
                 Vector2 pos = _panelRoot.anchoredPosition;
                 pos.x = _expandedX;
-                pos.y = -74f;
+                pos.y = -88f; // below the floating top bar
                 _panelRoot.anchoredPosition = pos;
             }
         }
@@ -71,7 +71,7 @@ namespace AncientTree.UI
             {
                 Vector2 pos = _panelRoot.anchoredPosition;
                 pos.x = targetX;
-                pos.y = -74f;
+                pos.y = -88f;
                 _panelRoot.anchoredPosition = pos;
             }
 

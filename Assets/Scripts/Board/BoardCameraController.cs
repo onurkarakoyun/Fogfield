@@ -55,6 +55,25 @@ namespace AncientTree.Board
         private float _pointerDownTime = 0f;
         private Plane _groundPlane;
 
+        [Header("Screen Shake (trauma model)")]
+        [Tooltip("Trauma lost per second (unscaled, so shake still settles during hit-stop)")]
+        [SerializeField] private float _traumaDecay = 1.3f;
+        [SerializeField] private float _maxShakeOffset = 0.55f;   // world units at full trauma
+        [SerializeField] private float _maxShakeRollDeg = 1.6f;
+        [SerializeField] private float _shakeFrequency = 22f;
+
+        private Vector3 _smoothedPosition;   // simulated camera position (no shake)
+        private Quaternion _baseRotation;
+        private float _trauma;
+        private float _shakeTime;
+        private float _shakeSeed;
+
+        /// <summary>Adds shake trauma (0..1). Hits accumulate; actual shake = trauma². Never moves gameplay state.</summary>
+        public void AddTrauma(float amount)
+        {
+            _trauma = Mathf.Clamp01(_trauma + amount);
+        }
+
         public bool IsDragging => _isDragging;
 
         private void Awake()
@@ -69,6 +88,9 @@ namespace AncientTree.Board
             if (_cam == null) _cam = Camera.main;
 
             _targetPosition = transform.position;
+            _smoothedPosition = transform.position;
+            _baseRotation = transform.rotation;
+            _shakeSeed = UnityEngine.Random.value * 100f;
             _groundPlane = new Plane(Vector3.up, Vector3.zero);
 
             // Initialize zoom targets
@@ -111,8 +133,33 @@ namespace AncientTree.Board
             else
                 _cam.fieldOfView = _currentZoom;
 
-            // Smooth damping
-            transform.position = Vector3.Lerp(transform.position, _targetPosition, Time.deltaTime * _damping);
+            // Smooth damping on the un-shaken position, then layer the shake on top as a pure visual offset
+            _smoothedPosition = Vector3.Lerp(_smoothedPosition, _targetPosition, Time.deltaTime * _damping);
+            ApplyShake();
+        }
+
+        private void ApplyShake()
+        {
+            if (_trauma <= 0f)
+            {
+                transform.position = _smoothedPosition;
+                transform.rotation = _baseRotation;
+                return;
+            }
+
+            float dt = Time.unscaledDeltaTime;
+            _trauma = Mathf.Max(0f, _trauma - _traumaDecay * dt);
+            _shakeTime += dt * _shakeFrequency;
+            float shake = _trauma * _trauma;
+
+            // Smooth noise (Perlin), never per-frame random → reads as a shake, not static buzz
+            float nx = Mathf.PerlinNoise(_shakeSeed, _shakeTime) * 2f - 1f;
+            float nz = Mathf.PerlinNoise(_shakeSeed + 31.7f, _shakeTime) * 2f - 1f;
+            float nr = Mathf.PerlinNoise(_shakeSeed + 63.1f, _shakeTime) * 2f - 1f;
+
+            Vector3 offset = (transform.right * nx + transform.up * nz) * (_maxShakeOffset * shake);
+            transform.position = _smoothedPosition + offset;
+            transform.rotation = _baseRotation * Quaternion.Euler(0f, 0f, nr * _maxShakeRollDeg * shake);
         }
 
         private void HandleInput()

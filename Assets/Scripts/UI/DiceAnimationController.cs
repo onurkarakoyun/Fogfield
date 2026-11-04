@@ -98,6 +98,7 @@ namespace AncientTree.UI
             {
                 // Landing thud SFX
                 AudioManager.Instance?.PlayDiceLand();
+                AncientTree.Feel.FeedbackDirector.Instance?.Trigger(AncientTree.Feel.FeedbackTier.Small);
 
                 // Stop number cycling and set definitive target value
                 if (_numberCycleCoroutine != null)

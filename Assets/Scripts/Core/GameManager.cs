@@ -32,7 +32,12 @@ namespace AncientTree.Core
             Instance = this;
 
             Application.runInBackground = true;
-            DOTween.Init(true, true, LogBehaviour.ErrorsOnly);
+            // BUGFIX: recycling MUST stay off. The codebase keeps references to finished tweens and calls
+            // "_someTween?.Kill()" on them later (tiles, HUD, pawns). With recycling on, a finished tween object is
+            // reused for a NEW tween elsewhere, so that stale Kill() randomly killed e.g. a pawn's jump mid-air:
+            // its OnComplete never fired, the turn stayed action-locked, clicks did nothing and the turn never ended.
+            DOTween.Init(false, true, LogBehaviour.ErrorsOnly);
+            DOTween.defaultRecyclable = false;
             DOTween.SetTweensCapacity(500, 50);
         }
 
@@ -63,10 +68,12 @@ namespace AncientTree.Core
             if (_mapGenerator != null)
                 _mapGenerator.GenerateMap();
 
+            // BUGFIX: enter Gameplay BEFORE the first turn starts. TurnManager.StartTurn() ignores calls outside
+            // Gameplay, so the first turn never began: no turn event (stale HUD) and a bot in seat 1 never moved.
+            SetGameState(GameState.Gameplay);
+
             if (_turnManager != null)
                 _turnManager.InitializeGame(activeSlots);
-
-            SetGameState(GameState.Gameplay);
         }
 
         public void StartOfflineGame(int playerCount, bool[] botFlags = null)
@@ -77,10 +84,10 @@ namespace AncientTree.Core
             if (_mapGenerator != null)
                 _mapGenerator.GenerateMap();
 
+            SetGameState(GameState.Gameplay); // must precede the first StartTurn (see routine above)
+
             if (_turnManager != null)
                 _turnManager.InitializeGame(playerCount, botFlags);
-
-            SetGameState(GameState.Gameplay);
         }
 
         public void ReturnToMainMenu()
