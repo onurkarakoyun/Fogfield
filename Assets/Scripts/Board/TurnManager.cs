@@ -69,7 +69,8 @@ namespace AncientTree.Board
 
         public void InitializeGame(List<PlayerSlotConfig> activeSlots)
         {
-            if (activeSlots == null || activeSlots.Count < 2)
+            int minPlayers = MatchConfig.Current.Mode == GameMode.Daily ? 1 : 2; // daily challenge is solo
+            if (activeSlots == null || activeSlots.Count < minPlayers)
             {
                 activeSlots = new List<PlayerSlotConfig>
                 {
@@ -441,7 +442,7 @@ namespace AncientTree.Board
                         {
                             player.CurrentCoordinates = to;
                             GameEvents.TriggerPawnMoved(playerIndex, from, to);
-                            FinishNetworkStep(newRemainingSteps, playerIndex);
+                            FinishNetworkStep(ApplyLandingRules(playerIndex, to, wasFogged, newRemainingSteps), playerIndex);
                         });
                     }
                 });
@@ -452,7 +453,7 @@ namespace AncientTree.Board
                 {
                     player.CurrentCoordinates = to;
                     GameEvents.TriggerPawnMoved(playerIndex, from, to);
-                    FinishNetworkStep(newRemainingSteps, playerIndex);
+                    FinishNetworkStep(ApplyLandingRules(playerIndex, to, false, newRemainingSteps), playerIndex);
                 });
             }
         }
@@ -466,6 +467,7 @@ namespace AncientTree.Board
             if (_remainingMovementPoints <= 0 || !HasReachableNeighbors())
             {
                 _currentPhase = TurnPhase.ActionSelection;
+                ApplyMovementEndRules(_activePlayerIndex);
                 GameEvents.TriggerTurnPhaseChanged(_currentPhase);
                 ClearAllTileHighlights();
             }
@@ -540,6 +542,7 @@ namespace AncientTree.Board
                         {
                             ActivePlayer.CurrentCoordinates = target;
                             GameEvents.TriggerPawnMoved(_activePlayerIndex, current, target);
+                            _remainingMovementPoints = ApplyLandingRules(_activePlayerIndex, target, true, _remainingMovementPoints - 1) + 1;
                             DeductMovementPoint();
                         });
                     }
@@ -552,8 +555,101 @@ namespace AncientTree.Board
                 {
                     ActivePlayer.CurrentCoordinates = target;
                     GameEvents.TriggerPawnMoved(_activePlayerIndex, current, target);
+                    _remainingMovementPoints = ApplyLandingRules(_activePlayerIndex, target, false, _remainingMovementPoints - 1) + 1;
                     DeductMovementPoint();
                 });
+            }
+        }
+
+        // ------------------------------------------------------------------ board rules
+        // Fog events, Ancient Tree bloom, settlement upgrade and siege. Everything here only reads state that is
+        // identical on every peer, so online matches stay in sync without extra messages.
+
+        private int _bloomClaimedRound = -1;
+
+        /// <summary>Every 3rd round the Ancient Tree blooms: the first pawn to land on it gets +5.</summary>
+        public bool BloomAvailable => MatchConfig.Current.UsesLandIncome && _currentRound % 3 == 0 && _bloomClaimedRound != _currentRound;
+
+        private void AddScore(PlayerData player, int amount)
+        {
+            if (player == null || amount == 0) return;
+            player.TotalScore = Mathf.Max(0, player.TotalScore + amount);
+            GameEvents.TriggerPlayerScoreUpdated(player.PlayerIndex, player.TotalScore);
+        }
+
+        /// <summary>Runs when a pawn lands on a tile. Returns the (possibly changed) movement left after this step.</summary>
+        private int ApplyLandingRules(int playerIndex, Vector2Int coords, bool wasFogged, int mpAfter)
+        {
+            var player = GetPlayer(playerIndex);
+            var pawn = GetPawn(playerIndex);
+            if (player == null || pawn == null || _mapGenerator == null) return mpAfter;
+
+            if (wasFogged && TileEvents.TryConsume(coords, out var ev, out var portalTo))
+            {
+                if (ev == BoardEventType.Treasure && !MatchConfig.Current.UsesLandIncome) ev = BoardEventType.Wisp;
+                int amount = 0;
+                switch (ev)
+                {
+                    case BoardEventType.Treasure: amount = 3; AddScore(player, amount); break;
+                    case BoardEventType.Wisp: amount = 1; mpAfter += 1; break;
+                    case BoardEventType.Storm: amount = mpAfter; mpAfter = 0; break;
+                    case BoardEventType.Relic: AddScore(player, 1); amount = player.TotalScore; break;
+                    case BoardEventType.Portal:
+                        var dest = _mapGenerator.GetTile(portalTo);
+                        if (dest != null && dest.Type != TileType.Mountain && !IsTileOccupiedByOtherPawn(portalTo, playerIndex))
+                        {
+                            GameEvents.TriggerBoardEvent(playerIndex, coords, BoardEventType.Portal, 0); // entry swirl
+                            if (!dest.IsRevealed) dest.RevealTile(immediate: true);
+                            Vector3 stand = dest.GetPawnStandPosition();
+                            if (portalTo == MapGenerator.CenterCoords) stand += GetPawnCenterOffset(playerIndex, _playerCount);
+                            pawn.TeleportTo(portalTo, stand);
+                            player.CurrentCoordinates = portalTo;
+                            coords = portalTo;
+                            amount = 1; // exit
+                        }
+                        break;
+                }
+                GameEvents.TriggerBoardEvent(playerIndex, coords, ev, amount);
+            }
+
+            if (coords == MapGenerator.CenterCoords && BloomAvailable)
+            {
+                _bloomClaimedRound = _currentRound;
+                AddScore(player, 5);
+                GameEvents.TriggerBoardEvent(playerIndex, coords, BoardEventType.Bloom, 5);
+            }
+            return mpAfter;
+        }
+
+        /// <summary>Movement finished: ending on your own settlement upgrades it, on a rival one besieges it.</summary>
+        private void ApplyMovementEndRules(int playerIndex)
+        {
+            if (!MatchConfig.Current.UsesLandIncome || SettlementManager.Instance == null) return;
+            var pawn = GetPawn(playerIndex);
+            var player = GetPlayer(playerIndex);
+            var tile = pawn != null && _mapGenerator != null ? _mapGenerator.GetTile(pawn.CurrentCoords) : null;
+            if (tile == null || player == null || !tile.HasSettlement) return;
+
+            if (tile.SettlementOwnerIndex == playerIndex)
+            {
+                if (!tile.UpgradeSettlement()) return;
+                player.RoundYield = SettlementManager.Instance.CalculatePlayerSettlementYield(playerIndex);
+                GameEvents.TriggerPlayerYieldUpdated(playerIndex, player.RoundYield);
+                GameEvents.TriggerBoardEvent(playerIndex, tile.GridCoords, BoardEventType.Upgrade, tile.SettlementLevel);
+            }
+            else
+            {
+                var victim = GetPlayer(tile.SettlementOwnerIndex);
+                int steal = victim != null ? Mathf.Min(tile.SettlementYield, victim.TotalScore) : 0;
+                AddScore(victim, -steal);
+                AddScore(player, steal);
+                tile.DowngradeSettlement();
+                if (victim != null)
+                {
+                    victim.RoundYield = SettlementManager.Instance.CalculatePlayerSettlementYield(victim.PlayerIndex);
+                    GameEvents.TriggerPlayerYieldUpdated(victim.PlayerIndex, victim.RoundYield);
+                }
+                GameEvents.TriggerBoardEvent(playerIndex, tile.GridCoords, BoardEventType.Siege, steal);
             }
         }
 
@@ -598,6 +694,7 @@ namespace AncientTree.Board
             if (_remainingMovementPoints <= 0 || !HasReachableNeighbors())
             {
                 _currentPhase = TurnPhase.ActionSelection;
+                ApplyMovementEndRules(_activePlayerIndex);
                 GameEvents.TriggerTurnPhaseChanged(_currentPhase);
                 ClearAllTileHighlights();
             }
@@ -1265,6 +1362,23 @@ namespace AncientTree.Board
                 }
             }
 
+            // Mode / event goals feed the same utility scoring (weights pull with 1/(distance+1)).
+            var mode = MatchConfig.Current.Mode;
+            bool lastStep = _remainingMovementPoints == 1;
+            if (mode == GameMode.FogHunt)
+            {
+                for (int x = 0; x < MapGenerator.GridSize; x++)
+                    for (int y = 0; y < MapGenerator.GridSize; y++)
+                    {
+                        var t = allTiles[x, y];
+                        if (t == null || t.IsRevealed || t.Type == TileType.Mountain) continue;
+                        // bots get a faint "hunch" for relics so they hunt purposefully, not omnisciently
+                        targets.Add((t.GridCoords, TileEvents.HasRelic(t.GridCoords) ? 90f : 40f));
+                    }
+            }
+            if (mode == GameMode.KingOfTree) targets.Add((MapGenerator.CenterCoords, 400f));
+            if (BloomAvailable) targets.Add((MapGenerator.CenterCoords, 260f));
+
             TileController bestTile = null;
             float bestScore = float.MinValue;
 
@@ -1295,6 +1409,24 @@ namespace AncientTree.Board
                         score += 5f;
                     }
                 }
+
+                // Ending the move on a settlement: own = upgrade, rival = siege (steals its income)
+                if (lastStep && cand.HasSettlement && MatchConfig.Current.UsesLandIncome)
+                {
+                    if (cand.SettlementOwnerIndex == _activePlayerIndex)
+                    {
+                        if (cand.SettlementLevel < TileController.MaxSettlementLevel) score += 90f;
+                    }
+                    else score += cand.SettlementYield * 30f;
+                }
+                if (mode == GameMode.KingOfTree)
+                {
+                    // can I still END on the tree from this step? needs distance <= steps left with even leftover
+                    var d = cand.GridCoords - MapGenerator.CenterCoords;
+                    int dist = Mathf.Abs(d.x) + Mathf.Abs(d.y), left = _remainingMovementPoints - 1;
+                    if (dist <= left && (left - dist) % 2 == 0) score += 220f;
+                }
+                if (mode == GameMode.FogHunt && !cand.IsRevealed) score += 60f;
 
                 // Global heuristic pull towards targets
                 foreach (var target in targets)

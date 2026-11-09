@@ -32,6 +32,23 @@ namespace AncientTree.Board
         public bool HasSettlement { get; private set; } = false;
         public int SettlementOwnerIndex { get; private set; } = -1;
 
+        /// <summary>1 = tent … 4 = tower. Each level above 1 adds +1 income. 0 = no settlement.</summary>
+        public int SettlementLevel { get; private set; }
+        public const int MaxSettlementLevel = 4;
+
+        /// <summary>Income this settlement pays per round.</summary>
+        public int SettlementYield => HasSettlement ? PointValue + Mathf.Max(0, SettlementLevel - 1) : 0;
+
+        public bool UpgradeSettlement()
+        {
+            if (!HasSettlement || SettlementLevel >= MaxSettlementLevel) return false;
+            SettlementLevel++;
+            return true;
+        }
+
+        /// <summary>Siege knocks a settlement down one level (never below 1).</summary>
+        public void DowngradeSettlement() { if (HasSettlement && SettlementLevel > 1) SettlementLevel--; }
+
         private Vector3 _basePosition;
         private Tween _flipTween;
         private Tween _glimmerTween;
@@ -51,6 +68,7 @@ namespace AncientTree.Board
             _basePosition = transform.position;
 
             HasSettlement = false;
+            SettlementLevel = 0;
             SettlementOwnerIndex = -1;
             if (_settlementRoot != null) _settlementRoot.SetActive(false);
             if (_highlightObject != null) _highlightObject.SetActive(false);
@@ -301,6 +319,7 @@ namespace AncientTree.Board
         public void PlaceSettlement(int playerIndex, Color playerColor)
         {
             HasSettlement = true;
+            SettlementLevel = 1;
             SettlementOwnerIndex = playerIndex;
 
             // Strict player color mapping to prevent white borders or washed out tints:
@@ -372,6 +391,7 @@ namespace AncientTree.Board
             if (!HasSettlement) return;
 
             HasSettlement = false;
+            SettlementLevel = 0;
             SettlementOwnerIndex = -1;
 
             _territoryTween?.Kill();

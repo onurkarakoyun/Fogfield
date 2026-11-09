@@ -25,28 +25,27 @@ namespace AncientTree.Feel
             if (_template == null) { enabled = false; return; }
             var rng = new System.Random(4242);
 
-            // stay on the table: props outside it would float over the sky
-            Bounds table = new Bounds(Vector3.zero, new Vector3(88f, 1f, 80f));
-            foreach (var r in FindObjectsByType<MeshRenderer>(FindObjectsSortMode.None))
-                if (r.name == "TableTopBase") { table = r.bounds; break; }
-            float minX = table.min.x + 2f, maxX = table.max.x - 2f, minZ = table.min.z + 2f, maxZ = table.max.z - 2f;
-
+            // ring of grass between the board and the island rim (island top is a rounded square, superellipse n=4)
+            const float rim = 30.5f;
             int placed = 0, guard = 0;
-            while (placed < 46 && guard++ < 600)
+            while (placed < 40 && guard++ < 1200)
             {
-                float x = Rand(rng, minX, maxX), z = Rand(rng, minZ, maxZ);
-                if (Mathf.Abs(x) < BoardHalf && Mathf.Abs(z) < BoardHalf) continue; // keep the board clear
-                var pos = new Vector3(x, 0f, z);
+                float x = Rand(rng, -rim, rim), z = Rand(rng, -rim, rim);
+                if (Mathf.Abs(x) < BoardHalf && Mathf.Abs(z) < BoardHalf) continue;             // keep the board clear
+                if (Mathf.Pow(Mathf.Abs(x) / rim, 4f) + Mathf.Pow(Mathf.Abs(z) / rim, 4f) > 1f) continue; // stay on the island
+                var pos = new Vector3(x, SkyIslandWorld.IslandTopY, z);
                 float r = (float)rng.NextDouble();
-                if (r < 0.28f) Tree(pos, rng);
-                else if (r < 0.48f) Bush(pos, rng);
-                else if (r < 0.64f) Mushroom(pos, rng);
-                else if (r < 0.8f) Rock(pos, rng);
+                if (z < -BoardHalf) r = 0.52f + r * 0.48f; // camera side: only low props, tall ones would hide tiles
+                if (r < 0.2f) Tree(pos, rng);
+                else if (r < 0.36f) Model("SM_Deco_Pine", pos, rng, Rand(rng, 0.8f, 1.4f));
+                else if (r < 0.52f) Bush(pos, rng);
+                else if (r < 0.66f) Mushroom(pos, rng);
+                else if (r < 0.8f) Model("SM_Deco_Rock", pos, rng, Rand(rng, 0.8f, 1.6f));
                 else Flowers(pos, rng);
                 placed++;
             }
 
-            for (int i = 0; i < 7; i++) Cloud(rng, i);
+            for (int i = 0; i < 14; i++) Cloud(rng, i);
         }
 
         private void Update()
@@ -122,7 +121,8 @@ namespace AncientTree.Feel
         {
             var root = new GameObject("DecoCloud").transform;
             root.SetParent(transform, false);
-            root.position = new Vector3(-100f + i * 32f + Rand(rng, -8f, 8f), Rand(rng, 14f, 26f), Rand(rng, 70f, 95f));
+            float ang = i / 14f * Mathf.PI * 2f + Rand(rng, -0.2f, 0.2f), rad = Rand(rng, 48f, 95f);
+            root.position = new Vector3(Mathf.Cos(ang) * rad, Rand(rng, -20f, -6f), Mathf.Sin(ang) * rad);
             root.localScale = Vector3.one * Rand(rng, 2.2f, 3.4f);
             var white = new Color(1f, 0.97f, 1f);
             Part(PrimitiveType.Sphere, root, Vector3.zero, new Vector3(3f, 1.8f, 2f), white, outline: false);
@@ -133,6 +133,15 @@ namespace AncientTree.Feel
         }
 
         // ------------------------------------------------------------------ helpers
+
+        private void Model(string name, Vector3 pos, System.Random rng, float scale)
+        {
+            var prefab = Resources.Load<GameObject>("Models/SkyIsland/" + name);
+            if (prefab == null) { Rock(pos, rng); return; }
+            var go = Instantiate(prefab, pos, Quaternion.Euler(0f, Rand(rng, 0f, 360f), 0f), transform);
+            go.transform.localScale = Vector3.one * scale;
+            foreach (var c in go.GetComponentsInChildren<Collider>()) Destroy(c);
+        }
 
         private Transform Root(string name, Vector3 pos, System.Random rng, float scale)
         {

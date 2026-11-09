@@ -101,6 +101,7 @@ namespace AncientTree.UI
             GameEvents.OnPlayerTurnStarted += HandleTurn;
             GameEvents.OnRoundChanged += HandleRound;
             GameEvents.OnGameStateChanged += HandleState;
+            GameEvents.OnBoardEvent += HandleBoardEvent;
         }
 
         private void OnDisable()
@@ -108,6 +109,7 @@ namespace AncientTree.UI
             GameEvents.OnPlayerTurnStarted -= HandleTurn;
             GameEvents.OnRoundChanged -= HandleRound;
             GameEvents.OnGameStateChanged -= HandleState;
+            GameEvents.OnBoardEvent -= HandleBoardEvent;
         }
 
         private static string L(string key, string fallback, params object[] args) =>
@@ -116,7 +118,10 @@ namespace AncientTree.UI
         private void HandleRound(int round)
         {
             if (round <= 1) return;
-            Enqueue(L("BANNER_ROUND", "Raunt {0}", round), L("ROUND_COMPLETED_MSG", "", round - 1), CuteTheme.Honey);
+            bool bloom = TurnManager.Instance != null && TurnManager.Instance.BloomAvailable;
+            Enqueue(L("BANNER_ROUND", "Raunt {0}", round),
+                    bloom ? L("BANNER_BLOOM_ROUND", "Kadim Ağaç çiçek açtı!") : L("ROUND_COMPLETED_MSG", "", round - 1),
+                    bloom ? new Color(1f, 0.62f, 0.78f) : CuteTheme.Honey);
         }
 
         private void HandleTurn(int index, string name, Color color)
@@ -131,6 +136,24 @@ namespace AncientTree.UI
                                           : string.Format(L("PLAYER_TURN_FORMAT", "{0}'in Sırası"), name);
             string sub = mine ? L("hud_roll_dice", "Zar At") : (isBot ? "Bot" : "");
             Enqueue(title, sub, Board.PawnController.Pastel(color));
+        }
+
+        private void HandleBoardEvent(int player, Vector2Int c, BoardEventType type, int amount)
+        {
+            if (type == BoardEventType.Portal && amount == 0) return; // entry half of a portal: banner on exit only
+            var p = TurnManager.Instance != null ? TurnManager.Instance.GetPlayer(player) : null;
+            string name = p != null ? p.PlayerName : "";
+            switch (type)
+            {
+                case BoardEventType.Treasure: Enqueue(L("EV_TREASURE", "Hazine! +{0}", amount), name, CuteTheme.Honey); break;
+                case BoardEventType.Storm:    Enqueue(L("EV_STORM", "Fırtına!"), name, new Color(0.45f, 0.42f, 0.66f)); break;
+                case BoardEventType.Portal:   Enqueue(L("EV_PORTAL", "Portal!"), name, CuteTheme.Lilac); break;
+                case BoardEventType.Wisp:     Enqueue(L("EV_WISP", "Peri Işığı! +1 Adım"), name, CuteTheme.Sky); break;
+                case BoardEventType.Relic:    Enqueue(L("EV_RELIC", "Kalıntı! ({0}/3)", amount), name, new Color(0.45f, 0.85f, 1f)); break;
+                case BoardEventType.Bloom:    Enqueue(L("EV_BLOOM", "Kadim Ağaç Çiçeği! +{0}", amount), name, new Color(1f, 0.62f, 0.78f)); break;
+                case BoardEventType.Upgrade:  Enqueue(L("EV_UPGRADE", "Yerleşke Seviye {0}!", amount), name, CuteTheme.Mint); break;
+                case BoardEventType.Siege:    Enqueue(L("EV_SIEGE", "Kuşatma! +{0}", amount), name, CuteTheme.Berry); break;
+            }
         }
 
         private void HandleState(GameState s)

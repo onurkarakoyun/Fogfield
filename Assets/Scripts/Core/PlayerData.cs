@@ -41,7 +41,7 @@ namespace AncientTree.Core
         public int RoundYield;
         public bool IsBot;
 
-        public const int MaxSettlements = 5;
+        public static int MaxSettlements => AncientTree.Core.MatchConfig.Current.MaxSettlements;
         /// <summary>Default target score. Runtime value comes from MatchConfig.Current.TargetScore.</summary>
         public static int TargetScoreToWin => AncientTree.Core.MatchConfig.Current.TargetScore;
 

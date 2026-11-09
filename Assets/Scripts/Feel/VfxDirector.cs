@@ -22,6 +22,9 @@ namespace AncientTree.Feel
 
         private Material _dotMat, _chipMat, _ringMat;
 
+        /// <summary>Soft round particle material, shared with ambient effects (waterfalls etc.).</summary>
+        public Material DotMaterial => _dotMat;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
         {
@@ -53,6 +56,8 @@ namespace AncientTree.Feel
             GameEvents.OnSettlementRelocated += HandleRelocated;
             GameEvents.OnVictory += HandleVictory;
             GameEvents.OnGameStateChanged += HandleState;
+            GameEvents.OnBoardEvent += HandleBoardEvent;
+            GameEvents.OnRoundChanged += HandleRoundFx;
         }
 
         private void OnDisable()
@@ -61,6 +66,8 @@ namespace AncientTree.Feel
             GameEvents.OnSettlementRelocated -= HandleRelocated;
             GameEvents.OnVictory -= HandleVictory;
             GameEvents.OnGameStateChanged -= HandleState;
+            GameEvents.OnBoardEvent -= HandleBoardEvent;
+            GameEvents.OnRoundChanged -= HandleRoundFx;
         }
 
         private static float Amount => FeedbackDirector.ReduceMotion ? 0.4f : 1f;
@@ -218,6 +225,132 @@ namespace AncientTree.Feel
         }
 
         private void HandleVictory(int p, string n, Color c, int s) => ConfettiRain(3f);
+
+        // ------------------------------------------------------------------ board events (fog surprises, bloom, upgrade, siege)
+
+        private static readonly Color Gold = new Color(1f, 0.82f, 0.35f);
+        private static readonly Color Violet = new Color(0.72f, 0.45f, 1f);
+        private static readonly Color Aqua = new Color(0.45f, 0.9f, 1f);
+        private static readonly Color Petal = new Color(1f, 0.72f, 0.85f);
+        private static readonly Color Danger = new Color(1f, 0.35f, 0.4f);
+
+        private void HandleBoardEvent(int player, Vector2Int c, BoardEventType type, int amount)
+        {
+            Vector3 p = TilePos(c);
+            switch (type)
+            {
+                case BoardEventType.Treasure:
+                    Ring(p + Vector3.up * 0.75f, Gold, 8f);
+                    Sparkles(p + Vector3.up, Mathf.RoundToInt(26 * Amount), Gold);
+                    Fountain(p, 24, Gold, Color.white);
+                    Popup(p + Vector3.up * 2.4f, "+" + amount, Gold);
+                    break;
+                case BoardEventType.Wisp:
+                    for (int i = 0; i < 16; i++)
+                        Emit(_dots, p + Random.insideUnitSphere * 1.2f + Vector3.up, Vector3.up * Random.Range(2f, 4f) + Random.insideUnitSphere,
+                            Random.Range(0.35f, 0.6f), Random.Range(0.8f, 1.3f), Aqua);
+                    Popup(p + Vector3.up * 2.4f, "+1", Aqua);
+                    break;
+                case BoardEventType.Storm:
+                    Ring(p + Vector3.up * 0.75f, Color.white, 11f);
+                    for (int i = 0; i < 14; i++) // dark cloud puff
+                        Emit(_dots, p + new Vector3(Random.Range(-1.5f, 1.5f), 3.2f + Random.Range(0f, 0.8f), Random.Range(-1.5f, 1.5f)),
+                            Random.insideUnitSphere * 0.4f, Random.Range(2.2f, 3.4f), Random.Range(1f, 1.4f), new Color(0.35f, 0.33f, 0.5f, 0.85f));
+                    StartCoroutine(Rain(p, 1.2f));
+                    break;
+                case BoardEventType.Portal:
+                    Ring(p + Vector3.up * 0.75f, Violet, amount == 0 ? 6f : 9f);
+                    for (int i = 0; i < 20; i++)
+                    {
+                        float a = i / 20f * Mathf.PI * 2f;
+                        var off = new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * 1.6f;
+                        Emit(_dots, p + off + Vector3.up * 0.8f, new Vector3(-off.z, 2.5f, off.x), 0.45f, 0.9f, Violet);
+                    }
+                    break;
+                case BoardEventType.Relic:
+                    Ring(p + Vector3.up * 0.75f, Aqua, 9f);
+                    Sparkles(p + Vector3.up * 1.5f, 24, Aqua);
+                    RiseModel("SM_Relic", p + Vector3.up * 0.6f);
+                    Popup(p + Vector3.up * 3f, amount + "/3", Aqua);
+                    break;
+                case BoardEventType.Bloom:
+                    Ring(p + Vector3.up * 0.75f, Petal, 12f);
+                    StartCoroutine(Petals(p, 2.5f, 6f));
+                    Popup(p + Vector3.up * 4f, "+" + amount, Petal);
+                    break;
+                case BoardEventType.Upgrade:
+                    Ring(p + Vector3.up * 0.75f, Gold, 7f);
+                    Fountain(p, 18, Gold, Color.white);
+                    Popup(p + Vector3.up * 3f, "Lv " + amount, Gold);
+                    break;
+                case BoardEventType.Siege:
+                    Ring(p + Vector3.up * 0.75f, Danger, 9f);
+                    Fountain(p, 20, Danger, new Color(1f, 0.7f, 0.5f));
+                    Popup(p + Vector3.up * 3f, amount > 0 ? "+" + amount : "0", Danger);
+                    break;
+            }
+        }
+
+        private void HandleRoundFx(int round)
+        {
+            // Ancient Tree bloom round: petals drift around the centre to point players at it
+            var tm = TurnManager.Instance;
+            if (tm != null && tm.BloomAvailable) StartCoroutine(Petals(TilePos(MapGenerator.CenterCoords), 4f, 9f));
+        }
+
+        private void Fountain(Vector3 p, int count, Color a, Color b)
+        {
+            int n = Mathf.RoundToInt(count * Amount);
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 dir = Random.insideUnitSphere; dir.y = Mathf.Abs(dir.y) + 1.2f;
+                Emit(_chips, p + Vector3.up * 0.8f, dir.normalized * Random.Range(6f, 10f), Random.Range(0.5f, 0.8f), Random.Range(1.1f, 1.6f), i % 2 == 0 ? a : b);
+            }
+        }
+
+        private System.Collections.IEnumerator Rain(Vector3 p, float seconds)
+        {
+            float end = Time.time + seconds;
+            while (Time.time < end)
+            {
+                for (int i = 0; i < 4; i++)
+                    Emit(_dots, p + new Vector3(Random.Range(-1.6f, 1.6f), 3.4f, Random.Range(-1.6f, 1.6f)), Vector3.down * Random.Range(7f, 10f),
+                        Random.Range(0.12f, 0.2f), 0.4f, new Color(0.6f, 0.75f, 1f, 0.9f));
+                yield return null;
+            }
+        }
+
+        private System.Collections.IEnumerator Petals(Vector3 centre, float seconds, float radius)
+        {
+            if (FeedbackDirector.ReduceMotion) seconds *= 0.4f;
+            float end = Time.time + seconds;
+            while (Time.time < end)
+            {
+                for (int i = 0; i < 2; i++)
+                {
+                    var off = Random.insideUnitCircle * radius;
+                    Emit(_chips, centre + new Vector3(off.x, Random.Range(6f, 9f), off.y), new Vector3(Random.Range(-0.6f, 0.6f), -Random.Range(0.8f, 1.6f), Random.Range(-0.6f, 0.6f)),
+                        Random.Range(0.35f, 0.6f), Random.Range(3f, 4.5f), Random.value < 0.7f ? Petal : Color.white);
+                }
+                yield return null;
+            }
+        }
+
+        /// <summary>Spawns a model that floats up, spins and shrinks away (e.g. a found relic).</summary>
+        private void RiseModel(string model, Vector3 p)
+        {
+            var prefab = Resources.Load<GameObject>("Models/SkyIsland/" + model);
+            if (prefab == null) return;
+            var go = Instantiate(prefab, p, Quaternion.identity);
+            foreach (var c in go.GetComponentsInChildren<Collider>()) Destroy(c);
+            go.transform.localScale = Vector3.zero;
+            var seq = DOTween.Sequence().SetLink(go);
+            seq.Append(go.transform.DOScale(1.6f, 0.35f).SetEase(Ease.OutBack));
+            seq.Join(go.transform.DOMoveY(p.y + 2.5f, 1.1f).SetEase(Ease.OutCubic));
+            seq.Join(go.transform.DORotate(new Vector3(0f, 540f, 0f), 1.4f, RotateMode.FastBeyond360).SetEase(Ease.OutCubic));
+            seq.Append(go.transform.DOScale(0f, 0.3f).SetEase(Ease.InBack));
+            seq.OnComplete(() => Destroy(go));
+        }
 
         private void HandleState(GameState state)
         {

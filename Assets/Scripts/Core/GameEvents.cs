@@ -14,6 +14,9 @@ namespace AncientTree.Core
         Victory = GameOver
     }
 
+    /// <summary>Things that can happen when a pawn lands / finishes moving (shared by VFX, audio, UI).</summary>
+    public enum BoardEventType { Treasure, Storm, Portal, Wisp, Relic, Bloom, Upgrade, Siege }
+
     public enum TurnPhase
     {
         WaitingForRoll = 0,
@@ -92,6 +95,10 @@ namespace AncientTree.Core
         public static event Action<float, bool, float, bool> OnAudioSettingsUpdated; // (sfxVol, sfxMute, musicVol, musicMute)
         public static void TriggerAudioSettingsUpdated(float sfxVol, bool sfxMute, float musicVol, bool musicMute) =>
             OnAudioSettingsUpdated?.Invoke(sfxVol, sfxMute, musicVol, musicMute);
+
+        public static event Action<int, Vector2Int, BoardEventType, int> OnBoardEvent; // (player, coords, type, amount)
+        public static void TriggerBoardEvent(int player, Vector2Int coords, BoardEventType type, int amount) =>
+            OnBoardEvent?.Invoke(player, coords, type, amount);
 
         public static event Action<bool> OnRelocationPrompt; // true when entering relocation selection
         public static void TriggerRelocationPrompt(bool active) => OnRelocationPrompt?.Invoke(active);

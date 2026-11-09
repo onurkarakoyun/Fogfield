@@ -2,6 +2,15 @@ using UnityEngine;
 
 namespace AncientTree.Core
 {
+    public enum GameMode
+    {
+        Classic = 0,     // settle land, earn income, reach the target score
+        Quick = 1,       // 30 points, max 3 settlements
+        FogHunt = 2,     // collect 3 of 5 hidden relics; no land income
+        KingOfTree = 3,  // +1 crown per round standing on/around the Ancient Tree; 5 crowns wins
+        Daily = 4,       // solo, same map for everyone today; reach 30 in as few rounds as possible
+    }
+
     /// <summary>
     /// Singleton runtime match configuration passed from lobby to MapGenerator & TurnManager.
     /// Apply a config before starting a match via <see cref="Apply"/> or use one of the preset factories.
@@ -28,6 +37,33 @@ namespace AncientTree.Core
 
         /// <summary>Resets the active config back to default values.</summary>
         public static void ResetToDefaults() { Current = Preset_Standard(); }
+
+        // ── Mode ──────────────────────────────────────────────────────────────────
+        public GameMode Mode { get; set; } = GameMode.Classic;
+
+        /// <summary>Settlements a player may own at once.</summary>
+        public int MaxSettlements { get; set; } = 5;
+
+        /// <summary>Land income only exists in the settlement modes.</summary>
+        public bool UsesLandIncome => Mode == GameMode.Classic || Mode == GameMode.Quick || Mode == GameMode.Daily;
+
+        /// <summary>Switches mode and its rule presets (target score, settlement cap).</summary>
+        public void SetMode(GameMode mode)
+        {
+            Mode = mode;
+            MaxSettlements = mode == GameMode.Quick ? 3 : 5;
+            switch (mode)
+            {
+                case GameMode.Classic:    TargetScore = 50; break;
+                case GameMode.Quick:      TargetScore = 30; break;
+                case GameMode.FogHunt:    TargetScore = 3;  break; // relics
+                case GameMode.KingOfTree: TargetScore = 5;  break; // crowns
+                case GameMode.Daily:      TargetScore = 30; break;
+            }
+        }
+
+        /// <summary>Today's seed (same map for everyone on the same day).</summary>
+        public static int DailySeed => int.Parse(System.DateTime.Now.ToString("yyyyMMdd"));
 
         // ── Scoring ───────────────────────────────────────────────────────────────
         /// <summary>First player to reach this score at round-end wins.</summary>

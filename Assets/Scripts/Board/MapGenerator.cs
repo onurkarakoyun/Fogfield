@@ -129,6 +129,9 @@ namespace AncientTree.Board
         /// Generates the 11x11 procedural board strictly adhering to all game constraints.
         /// Wrapped in try-catch with emergency fallback so the board is NEVER left empty in builds.
         /// </summary>
+        /// <summary>Raised after a board is built, with its seed (deterministic per-tile data hangs off it).</summary>
+        public static event System.Action<int> OnMapGenerated;
+
         public void GenerateMap(int? customSeed = null)
         {
             int seed = customSeed ?? UnityEngine.Random.Range(10000, 999999);
@@ -187,6 +190,7 @@ namespace AncientTree.Board
                 }
 
                 Debug.Log($"<color=green><b>[MapGenerator]</b> 11x11 harita başarıyla üretildi! (Toplam: {TotalTiles} karo, Tohum: {seed})</color>");
+                OnMapGenerated?.Invoke(seed);
             }
             catch (System.Exception ex)
             {

@@ -135,6 +135,14 @@ namespace AncientTree.Board
             _jumpTween = seq;
         }
 
+        /// <summary>Instant move (portal). Keeps the landing squash so it still reads as an arrival.</summary>
+        public void TeleportTo(Vector2Int coords, Vector3 worldPos)
+        {
+            _currentCoords = coords;
+            transform.position = worldPos;
+            Squash(0.3f, 0.3f);
+        }
+
         /// <summary>
         /// Mountain collision: pawn leaps toward mountain, SLAMS into it (impact squash, hit-stop, shake, rock thud)
         /// and is knocked back to its previous position. Consumes 1 MP, mountain flips.

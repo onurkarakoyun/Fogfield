@@ -997,6 +997,7 @@ namespace AncientTree.Network
                 {
                     Seed = seed,
                     TargetScore = CurrentRoom.TargetScore,
+                    Mode = (int)(MatchConfig.Current.Mode == GameMode.Daily ? GameMode.Classic : MatchConfig.Current.Mode),
                     MountainCount = 24,
                     GlimmerCount = 7,
                     PlayerCount = totalOccupied,
@@ -1060,6 +1061,7 @@ namespace AncientTree.Network
                 var cfg = MatchConfig.Current;
                 if (cfg != null)
                 {
+                    cfg.SetMode((GameMode)b.Mode); // before GenerateMap: relic placement depends on it
                     cfg.TargetScore = b.TargetScore;
                     cfg.MountainCount = b.MountainCount;
                     cfg.GlimmerCount = b.GlimmerCount;

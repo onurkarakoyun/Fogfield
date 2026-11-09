@@ -95,6 +95,10 @@ namespace AncientTree.Board
 
         public int CalculatePlayerSettlementYield(int playerIndex)
         {
+            var mode = AncientTree.Core.MatchConfig.Current.Mode;
+            if (mode == AncientTree.Core.GameMode.FogHunt) return 0; // score = relics, picked up on the board
+            if (mode == AncientTree.Core.GameMode.KingOfTree) return InTreeZone(playerIndex) ? 1 : 0; // a crown per round
+
             int total = 0;
             if (_playerSettlements.TryGetValue(playerIndex, out var list) && list != null && list.Count > 0)
             {
@@ -103,7 +107,7 @@ namespace AncientTree.Board
                     var tile = list[i];
                     if (tile != null && tile.HasSettlement && tile.SettlementOwnerIndex == playerIndex)
                     {
-                        total += tile.PointValue;
+                        total += tile.SettlementYield;
                     }
                     else if (tile != null && (!tile.HasSettlement || tile.SettlementOwnerIndex != playerIndex))
                     {
@@ -128,7 +132,7 @@ namespace AncientTree.Board
                             var t = allTiles[x, y];
                             if (t != null && t.HasSettlement && t.SettlementOwnerIndex == playerIndex)
                             {
-                                total += t.PointValue;
+                                total += t.SettlementYield;
                                 if (list != null && !list.Contains(t))
                                 {
                                     list.Add(t);
@@ -140,6 +144,16 @@ namespace AncientTree.Board
             }
 
             return total;
+        }
+
+        /// <summary>
+        /// King of the Tree: standing ON the Ancient Tree tile at round end. (A 5-tile zone let everyone camp and
+        /// score every round; with forced d4 movement, staying on one tile needs an even number of steps back.)
+        /// </summary>
+        public static bool InTreeZone(int playerIndex)
+        {
+            var pawn = TurnManager.Instance != null ? TurnManager.Instance.GetPawn(playerIndex) : null;
+            return pawn != null && pawn.CurrentCoords == MapGenerator.CenterCoords;
         }
 
         public int CalculatePlayerScore(int playerIndex)

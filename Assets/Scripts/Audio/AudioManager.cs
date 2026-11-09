@@ -104,6 +104,7 @@ namespace AncientTree.Audio
             GameEvents.OnPlayerScoreUpdated += HandleScoreUpdated;
             GameEvents.OnRoundChanged += HandleRoundChanged;
             GameEvents.OnVictory += HandleVictory;
+            GameEvents.OnBoardEvent += HandleBoardEvent;
         }
 
         private void OnDisable()
@@ -116,6 +117,7 @@ namespace AncientTree.Audio
             GameEvents.OnPlayerScoreUpdated -= HandleScoreUpdated;
             GameEvents.OnRoundChanged -= HandleRoundChanged;
             GameEvents.OnVictory -= HandleVictory;
+            GameEvents.OnBoardEvent -= HandleBoardEvent;
         }
 
         private void Start()
@@ -214,6 +216,21 @@ namespace AncientTree.Audio
             if (!_inTension && progress >= _tensionEnter) _inTension = true;
             else if (_inTension && progress < _tensionExit) _inTension = false;
             SetMusicIntensity(_inTension ? 2 : 1);
+        }
+
+        private void HandleBoardEvent(int player, Vector2Int c, BoardEventType type, int amount)
+        {
+            switch (type)
+            {
+                case BoardEventType.Treasure: Play(Sfx.Score); Play(Sfx.Build, 1.2f); DuckMusic(-5f, 0.4f); break;
+                case BoardEventType.Wisp:     Play(Sfx.Flip, 1.3f); break;
+                case BoardEventType.Storm:    PlayMountainBonk(); break;
+                case BoardEventType.Portal:   Play(Sfx.Relocate, amount == 0 ? 1.2f : 0.9f); break;
+                case BoardEventType.Relic:    Play(Sfx.Round, 1.15f); DuckMusic(-8f, 0.8f); break;
+                case BoardEventType.Bloom:    Play(Sfx.Round); DuckMusic(-8f, 0.8f); break;
+                case BoardEventType.Upgrade:  Play(Sfx.Build, 1.1f); break;
+                case BoardEventType.Siege:    Play(Sfx.Mountain, 1.25f); Play(Sfx.Score, 0.8f); break;
+            }
         }
 
         private void HandleVictory(int p, string name, Color c, int s)

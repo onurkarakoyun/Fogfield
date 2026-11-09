@@ -167,6 +167,7 @@ namespace AncientTree.Network
         public int GlimmerCount;
         public int PlayerCount;
         public int BotMask;
+        public int Mode; // AncientTree.Core.GameMode
     }
 
     // ========================================================================

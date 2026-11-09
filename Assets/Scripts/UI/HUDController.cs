@@ -696,6 +696,17 @@ namespace AncientTree.UI
                 string winnerSimple = LocalizationManager.Instance?.Get("VICTORY_WINNER_SIMPLE", winnerName) ?? $"{winnerName} Kazandı!";
                 string pointUnit = LocalizationManager.Instance?.Get("SCORE_UNIT") ?? "Puan";
                 _victoryWinnerText.text = $"{winnerSimple}\n({finalScore} / {TargetScore} {pointUnit})";
+                if (AncientTree.Core.MatchConfig.Current.Mode == AncientTree.Core.GameMode.Daily && TurnManager.Instance != null)
+                {
+                    // daily challenge: fewer rounds is better, one record per calendar day
+                    int rounds = TurnManager.Instance.CurrentRound;
+                    string key = "Daily_" + AncientTree.Core.MatchConfig.DailySeed;
+                    int best = Mathf.Min(PlayerPrefs.GetInt(key, int.MaxValue), rounds);
+                    PlayerPrefs.SetInt(key, best);
+                    PlayerPrefs.Save();
+                    string fmt = LocalizationManager.Instance?.Get("DAILY_RESULT") ?? "Günlük: {0} raunt — Rekor: {1}";
+                    _victoryWinnerText.text += "\n" + string.Format(fmt, rounds, best);
+                }
             }
 
             if (_victoryColorAccent != null) _victoryColorAccent.color = winnerColor;
@@ -728,8 +739,8 @@ namespace AncientTree.UI
 
             if (_settlementCounterText != null)
             {
-                string format = LocalizationManager.Instance?.Get("SETTLEMENT_COUNTER") ?? "Yerleşkeler: {0}/5";
-                _settlementCounterText.text = string.Format(format, count);
+                string format = LocalizationManager.Instance?.Get("SETTLEMENT_COUNTER") ?? "Yerleşkeler: {0}/{1}";
+                _settlementCounterText.text = string.Format(format, count, PlayerData.MaxSettlements);
             }
         }
 

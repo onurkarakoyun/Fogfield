@@ -83,6 +83,8 @@ namespace AncientTree.Feel
                 }
             }
             Color baseCol = src.HasProperty("_BaseColor") ? src.GetColor("_BaseColor") : src.color;
+            // Blender FBX colours arrive linear but are read as sRGB (washed out): convert our Blender materials back
+            if (src.name.StartsWith("MAT_")) baseCol = baseCol.linear;
 
             string n = src.name.ToLowerInvariant();
             bool isFog = n.Contains("sis");

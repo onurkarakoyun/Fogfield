@@ -105,7 +105,7 @@ namespace AncientTree.UI.Menu
             var glow = NewRect("CenterGlow", _decor).gameObject.AddComponent<Image>();
             glow.sprite = CuteTheme.BlobSprite;
             glow.type = Image.Type.Simple;
-            glow.color = new Color(1f, 0.95f, 0.85f, 0.35f);
+            glow.color = new Color(1f, 0.95f, 0.85f, 0.14f);
             glow.raycastTarget = false;
             var grt = glow.rectTransform;
             grt.anchorMin = grt.anchorMax = new Vector2(0.5f, 0.5f);
@@ -251,18 +251,7 @@ namespace AncientTree.UI.Menu
             var panel = _root.Find("CenterArea/MainButtonsPanel");
             if (panel == null) return;
 
-            // frosted card behind the buttons
-            var card = NewRect("ButtonsCard", panel).gameObject.AddComponent<Image>();
-            card.transform.SetSiblingIndex(0);
-            card.sprite = CuteTheme.RoundedSprite;
-            card.type = Image.Type.Sliced;
-            card.pixelsPerUnitMultiplier = CuteTheme.SpriteRadius / 28f;
-            card.color = new Color(CuteTheme.PlumDeep.r, CuteTheme.PlumDeep.g, CuteTheme.PlumDeep.b, 0.72f);
-            card.raycastTarget = false;
-            Place(card.transform, new Vector2(0f, 2f), new Vector2(480f, 400f));
-            var sh = card.gameObject.AddComponent<Shadow>();
-            sh.effectColor = new Color(0.08f, 0.04f, 0.14f, 0.4f);
-            sh.effectDistance = new Vector2(0f, -10f);
+            AddCard(panel, new Vector2(0f, 2f), new Vector2(480f, 400f));
 
             Restyle(panel.Find("PlayButton"), new Vector2(0f, 112f), new Vector2(400f, 92f), CuteTheme.Mint, 34f);
             Restyle(panel.Find("HowToPlayButton"), new Vector2(0f, 14f), new Vector2(400f, 66f), CuteTheme.Sky, 24f);
@@ -281,6 +270,22 @@ namespace AncientTree.UI.Menu
                 _playGlow.transform.SetSiblingIndex(play.GetSiblingIndex());
                 Place(_playGlow.transform, new Vector2(0f, 112f), new Vector2(560f, 210f));
             }
+        }
+
+        /// <summary>Frosted plum card behind a menu panel so its controls never float over the busy island.</summary>
+        private static void AddCard(Transform panel, Vector2 pos, Vector2 size)
+        {
+            var card = NewRect("Card", panel).gameObject.AddComponent<Image>();
+            card.transform.SetSiblingIndex(0);
+            card.sprite = CuteTheme.RoundedSprite;
+            card.type = Image.Type.Sliced;
+            card.pixelsPerUnitMultiplier = CuteTheme.SpriteRadius / 28f;
+            card.color = new Color(CuteTheme.PlumDeep.r, CuteTheme.PlumDeep.g, CuteTheme.PlumDeep.b, 0.78f);
+            card.raycastTarget = false;
+            Place(card.transform, pos, size);
+            var sh = card.gameObject.AddComponent<Shadow>();
+            sh.effectColor = new Color(0.08f, 0.04f, 0.14f, 0.4f);
+            sh.effectDistance = new Vector2(0f, -10f);
         }
 
         private static void Restyle(Transform t, Vector2 pos, Vector2 size, Color color, float fontSize)
@@ -316,6 +321,7 @@ namespace AncientTree.UI.Menu
         {
             var panel = _root.Find("CenterArea/ModeSelectPanel");
             if (panel == null) return;
+            AddCard(panel, new Vector2(0f, -8f), new Vector2(540f, 330f));
             Restyle(panel.Find("OfflineModeButton"), new Vector2(0f, 90f), new Vector2(460f, 82f), CuteTheme.Mint, 26f);
             Restyle(panel.Find("OnlineModeButton"), new Vector2(0f, -6f), new Vector2(460f, 82f), CuteTheme.Sky, 26f);
             Restyle(panel.Find("ModeBackButton"), new Vector2(0f, -110f), new Vector2(240f, 54f), CuteTheme.PlumSoft, 20f);
@@ -325,29 +331,96 @@ namespace AncientTree.UI.Menu
         {
             var p = _root.Find("CenterArea/PlayerSelectPanel");
             if (p == null) return;
+            AddCard(p, new Vector2(0f, 12f), new Vector2(640f, 470f));
 
             var header = p.Find("SelectHeader");
-            if (header != null)
-            {
-                Place(header, new Vector2(0f, 212f), new Vector2(540f, 44f));
-                var ht = header.GetComponent<TextMeshProUGUI>();
-                if (ht != null) { ht.fontSize = 26f; ht.alignment = TextAlignmentOptions.Center; }
-            }
+            if (header != null) header.gameObject.SetActive(false); // the mode selector takes its place
+            BuildModeSelector(p);
 
-            Restyle(p.Find("Player2Btn"), new Vector2(-152f, 156f), new Vector2(140f, 50f), CuteTheme.PlumSoft, 20f);
-            Restyle(p.Find("Player3Btn"), new Vector2(0f, 156f), new Vector2(140f, 50f), CuteTheme.PlumSoft, 20f);
-            Restyle(p.Find("Player4Btn"), new Vector2(152f, 156f), new Vector2(140f, 50f), CuteTheme.PlumSoft, 20f);
+            Restyle(p.Find("Player2Btn"), new Vector2(-152f, 132f), new Vector2(140f, 50f), CuteTheme.PlumSoft, 20f);
+            Restyle(p.Find("Player3Btn"), new Vector2(0f, 132f), new Vector2(140f, 50f), CuteTheme.PlumSoft, 20f);
+            Restyle(p.Find("Player4Btn"), new Vector2(152f, 132f), new Vector2(140f, 50f), CuteTheme.PlumSoft, 20f);
 
             // seat cards: tall enough for the two-line "Slot 2 (Kırmızı) / [ BOT ]" label
             for (int i = 0; i < 4; i++)
-                Restyle(p.Find($"Slot{i + 1}Btn"), new Vector2(-198f + i * 132f, 48f), new Vector2(122f, 118f), CuteTheme.PlumSoft, 18f);
+                Restyle(p.Find($"Slot{i + 1}Btn"), new Vector2(-198f + i * 132f, 26f), new Vector2(122f, 114f), CuteTheme.PlumSoft, 18f);
 
             var sel = p.Find("SelectedPlayersText");
-            if (sel != null) Place(sel, new Vector2(0f, -40f), new Vector2(540f, 34f));
+            if (sel != null) Place(sel, new Vector2(0f, -54f), new Vector2(540f, 30f));
 
-            Restyle(p.Find("StartGameButton"), new Vector2(-116f, -102f), new Vector2(220f, 66f), CuteTheme.Mint, 24f);
-            Restyle(p.Find("MatchSettingsOpenBtn"), new Vector2(116f, -102f), new Vector2(220f, 66f), CuteTheme.Lilac, 20f);
-            Restyle(p.Find("PlayerSelectBackButton"), new Vector2(0f, -178f), new Vector2(220f, 50f), CuteTheme.PlumSoft, 20f);
+            Restyle(p.Find("StartGameButton"), new Vector2(-116f, -112f), new Vector2(220f, 64f), CuteTheme.Mint, 24f);
+            Restyle(p.Find("MatchSettingsOpenBtn"), new Vector2(116f, -112f), new Vector2(220f, 64f), CuteTheme.Lilac, 20f);
+            Restyle(p.Find("PlayerSelectBackButton"), new Vector2(0f, -186f), new Vector2(220f, 48f), CuteTheme.PlumSoft, 20f);
+        }
+
+        // ------------------------------------------------------------------ game mode selector
+
+        private static readonly GameMode[] Modes = { GameMode.Classic, GameMode.Quick, GameMode.FogHunt, GameMode.KingOfTree, GameMode.Daily };
+        private static readonly string[] ModeKeys = { "MODE_CLASSIC", "MODE_QUICK", "MODE_FOGHUNT", "MODE_KING", "MODE_DAILY" };
+        private TextMeshProUGUI _modeTitle, _modeDesc;
+
+        private void BuildModeSelector(Transform panel)
+        {
+            var row = NewRect("ModeSelector", panel);
+            row.anchoredPosition = new Vector2(0f, 214f);
+            row.sizeDelta = new Vector2(560f, 56f);
+
+            MakeArrow(row, "ModePrev", "<", new Vector2(-250f, 0f), -1);
+            MakeArrow(row, "ModeNext", ">", new Vector2(250f, 0f), +1);
+
+            _modeTitle = NewRect("ModeTitle", row).gameObject.AddComponent<TextMeshProUGUI>();
+            _modeTitle.rectTransform.sizeDelta = new Vector2(420f, 52f);
+            _modeTitle.fontSize = 30f;
+            _modeTitle.fontStyle = FontStyles.Bold;
+            _modeTitle.alignment = TextAlignmentOptions.Center;
+            _modeTitle.color = CuteTheme.Honey;
+            _modeTitle.raycastTarget = false;
+
+            _modeDesc = NewRect("ModeDesc", panel).gameObject.AddComponent<TextMeshProUGUI>();
+            _modeDesc.rectTransform.anchoredPosition = new Vector2(0f, 178f);
+            _modeDesc.rectTransform.sizeDelta = new Vector2(560f, 30f);
+            _modeDesc.fontSize = 17f;
+            _modeDesc.alignment = TextAlignmentOptions.Center;
+            _modeDesc.color = CuteTheme.Cream;
+            _modeDesc.raycastTarget = false;
+
+            GameEvents.OnLanguageChanged += _ => RefreshMode();
+            RefreshMode();
+        }
+
+        private void MakeArrow(Transform parent, string name, string label, Vector2 pos, int dir)
+        {
+            var go = NewRect(name, parent).gameObject;
+            ((RectTransform)go.transform).anchoredPosition = pos;
+            ((RectTransform)go.transform).sizeDelta = new Vector2(56f, 52f);
+            var img = go.AddComponent<Image>();
+            img.color = CuteTheme.PlumSoft;
+            var btn = go.AddComponent<Button>();
+            var txt = NewRect("Text", go.transform).gameObject.AddComponent<TextMeshProUGUI>();
+            txt.rectTransform.anchorMin = Vector2.zero; txt.rectTransform.anchorMax = Vector2.one; txt.rectTransform.sizeDelta = Vector2.zero;
+            txt.text = label;
+            txt.fontSize = 30f;
+            txt.alignment = TextAlignmentOptions.Center;
+            txt.color = Color.white;
+            btn.onClick.AddListener(() =>
+            {
+                Audio.AudioManager.Instance?.PlayClick();
+                int i = System.Array.IndexOf(Modes, MatchConfig.Current.Mode);
+                i = (i + dir + Modes.Length) % Modes.Length;
+                MatchConfig.Current.SetMode(Modes[i]);
+                RefreshMode();
+                if (_modeTitle != null) _modeTitle.transform.DOPunchScale(Vector3.one * 0.12f, 0.25f, 6, 0.6f).SetUpdate(true);
+            });
+        }
+
+        private void RefreshMode()
+        {
+            if (_modeTitle == null) return;
+            var loc = Settings.LocalizationManager.Instance;
+            int i = Mathf.Max(0, System.Array.IndexOf(Modes, MatchConfig.Current.Mode));
+            string name = loc != null ? loc.Get(ModeKeys[i]) : Modes[i].ToString();
+            _modeTitle.text = loc != null ? loc.Get("MODE_LABEL", name) : name;
+            _modeDesc.text = loc != null ? loc.Get(ModeKeys[i] + "_DESC") : "";
         }
 
         private void BuildFooter()
@@ -436,7 +509,7 @@ namespace AncientTree.UI.Menu
             ClearShowcase();
             var cam = Camera.main;
             if (cam == null) return;
-            var ground = new Plane(Vector3.up, Vector3.zero);
+            var ground = new Plane(Vector3.up, new Vector3(0f, AncientTree.Feel.SkyIslandWorld.IslandTopY, 0f)); // island grass
             Vector2[] screen = { new Vector2(0.12f, 0.2f), new Vector2(0.24f, 0.1f), new Vector2(0.76f, 0.1f), new Vector2(0.88f, 0.2f) };
             for (int i = 0; i < screen.Length; i++)
             {
